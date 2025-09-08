@@ -26,14 +26,20 @@ class Page:
         self.data[offset : offset + len(data)] = data
         self.is_dirty = True
 
-    def read_int(self, offset: int) -> int:
-        """读取4字节整数"""
-        return struct.unpack("<I", self.data[offset : offset + 4])[0]
-
     def write_int(self, offset: int, value: int):
-        """写入4字节整数"""
-        self.data[offset : offset + 4] = struct.pack("<I", value)
+        """在指定偏移位置写入4字节有符号整数"""
+        if offset < 0 or offset + 4 > self.PAGE_SIZE:
+            raise ValueError(f"偏移量超出范围: {offset}")
+        # 使用有符号整数格式 'i' 而不是无符号 'I'
+        self.data[offset : offset + 4] = struct.pack("<i", value)
         self.is_dirty = True
+
+    def read_int(self, offset: int) -> int:
+        """从指定偏移位置读取4字节有符号整数"""
+        if offset < 0 or offset + 4 > self.PAGE_SIZE:
+            raise ValueError(f"偏移量超出范围: {offset}")
+        # 使用有符号整数格式 'i'
+        return struct.unpack("<i", self.data[offset : offset + 4])[0]
 
 
 class PageManager:

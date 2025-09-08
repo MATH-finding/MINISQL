@@ -120,3 +120,50 @@ class SelectStatement(Statement):
         if self.where_clause:
             result += f" WHERE {self.where_clause}"
         return result
+
+
+# sql/ast_nodes.py 中添加
+class CreateIndexNode(ASTNode):
+    """创建索引AST节点"""
+
+    def __init__(
+        self,
+        index_name: str,
+        table_name: str,
+        column_name: str,
+        is_unique: bool = False,
+    ):
+        self.index_name = index_name
+        self.table_name = table_name
+        self.column_name = column_name
+        self.is_unique = is_unique
+
+
+class DropIndexNode(ASTNode):
+    """删除索引AST节点"""
+
+    def __init__(self, index_name: str):
+        self.index_name = index_name
+
+
+class CreateIndexStatement(Statement):
+    """CREATE INDEX语句"""
+
+    def __init__(
+        self,
+        index_name: str,
+        table_name: str,
+        column_name: str,
+        is_unique: bool = False,
+    ):
+        self.index_name = index_name
+        self.table_name = table_name
+        self.column_name = column_name
+        self.is_unique = is_unique
+
+
+class DropIndexStatement(Statement):
+    """DROP INDEX语句"""
+
+    def __init__(self, index_name: str):
+        self.index_name = index_name

@@ -29,10 +29,14 @@ class SQLShell:
                 if user_input:
                     self._process_command(user_input)
             except KeyboardInterrupt:
-                print("\n\n👋 再见！")
+                print("\n正在保存数据...")
+                self.database.flush_all()  # 强制保存
+                print("数据已保存，再见！")
                 break
             except EOFError:
-                print("\n\n👋 再见！")
+                print("\n正在保存数据...")
+                self.database.flush_all()  # 强制保存
+                print("数据已保存，再见！")
                 break
 
     def _get_input(self) -> Optional[str]:
@@ -65,11 +69,13 @@ class SQLShell:
 
         # 内置命令
         if command.lower() in ("quit", "exit"):
-            print("👋 再见！")
+            print("正在保存数据...")
+            self.database.flush_all()  # 退出前保存
+            print("数据已保存，再见！")
             self.running = False
             return
 
-        if command.lower() == "help":
+        if command.lower() in ("help", "?"):
             self._show_help()
             return
 
@@ -82,6 +88,12 @@ class SQLShell:
         ):
             table_name = command.split()[1]
             self._describe_table(table_name)
+            return
+
+        if command.lower().startswith("indexes"):
+            parts = command.split()
+            table_name = parts[1] if len(parts) > 1 else None
+            self._show_indexes(table_name)
             return
 
         if command.lower() == "stats":
@@ -99,42 +111,55 @@ class SQLShell:
         print()  # 空行
         result = self.database.execute_sql(command)
         format_query_result(result)
+
+        # 对于修改数据的操作，强制保存
+        if command.upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
+            self.database.flush_all()
+
         print()  # 空行
 
     def _show_help(self):
         """显示帮助信息"""
         print(
             """
-📚 SQL Shell 帮助
-================
+📚 MiniSQL 命令帮助
 
-SQL 命令:
-  CREATE TABLE table_name (col1 type, col2 type, ...)  创建表
-  INSERT INTO table_name VALUES (val1, val2, ...)      插入数据
-  SELECT * FROM table_name [WHERE condition]           查询数据
-
-内置命令:
-  help, ?          显示此帮助
-  tables           列出所有表
-  describe <table> 显示表结构 (可简写为 desc)
-  stats            显示数据库统计信息
-  clear            清屏
-  quit, exit       退出
-
-数据类型:
+📋 SQL语句:
+  CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+  INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
+  SELECT columns FROM table_name [WHERE condition]     - 查询数据
+  
+🔍 索引操作:
+  CREATE INDEX index_name ON table_name (column)       - 创建索引
+  CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
+  DROP INDEX index_name                                - 删除索引
+  
+📊 系统命令:
+  tables                     - 列出所有表
+  describe <table>           - 查看表结构 (可简写为 desc)
+  indexes [table_name]       - 查看索引信息
+  stats                      - 显示数据库统计信息
+  help, ?                    - 显示此帮助
+  clear                      - 清屏
+  quit, exit                 - 退出Shell
+  
+💡 数据类型:
   INTEGER          整数
   VARCHAR(n)       字符串，最大长度n
   FLOAT            浮点数
-  BOOLEAN          布尔值
+  BOOLEAN          布尔值 (TRUE/FALSE)
 
-约束:
+🔒 约束:
   PRIMARY KEY      主键
   NOT NULL         非空
+  NULL            允许为空
 
-示例:
-  CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50) NOT NULL);
+💡 示例:
+  CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50));
+  CREATE INDEX idx_user_id ON users (id);
   INSERT INTO users VALUES (1, 'Alice');
   SELECT * FROM users WHERE id = 1;
+  DROP INDEX idx_user_id;
         """
         )
 
@@ -152,6 +177,36 @@ SQL 命令:
         """显示表结构"""
         table_info = self.database.get_table_info(table_name)
         format_table_info(table_info)
+
+    def _show_indexes(self, table_name: Optional[str] = None):
+        """显示索引信息"""
+        if table_name:
+            indexes = self.database.list_indexes(table_name)
+            print(f"表 '{table_name}' 的索引:")
+            if indexes.get("success") and indexes.get("indexes"):
+                for idx in indexes["indexes"]:
+                    unique_flag = " (UNIQUE)" if idx.get("is_unique") else ""
+                    print(
+                        f"  🔍 {idx['index_name']} -> {idx['column_name']}{unique_flag}"
+                    )
+            else:
+                print("  (无索引)")
+        else:
+            # 显示所有表的索引
+            tables = self.database.list_tables()
+            print("所有索引:")
+            total_indexes = 0
+            for table in tables:
+                indexes = self.database.list_indexes(table)
+                if indexes.get("success") and indexes.get("indexes"):
+                    for idx in indexes["indexes"]:
+                        unique_flag = " (UNIQUE)" if idx.get("is_unique") else ""
+                        print(
+                            f"  🔍 {idx['index_name']} -> {table}.{idx['column_name']}{unique_flag}"
+                        )
+                        total_indexes += 1
+            if total_indexes == 0:
+                print("  (无索引)")
 
     def _show_stats(self):
         """显示数据库统计信息"""

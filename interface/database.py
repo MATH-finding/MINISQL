@@ -5,6 +5,7 @@
 from typing import Dict, Any
 from storage import PageManager, BufferManager, RecordManager
 from catalog import SystemCatalog
+from catalog.index_manager import IndexManager  # 新增导入
 from table import TableManager
 from sql import SQLLexer, SQLParser, SQLExecutor
 
@@ -23,11 +24,16 @@ class SimpleDatabase:
         # 初始化目录层
         self.catalog = SystemCatalog(self.buffer_manager)
 
+        # 添加索引管理器
+        self.index_manager = IndexManager(self.buffer_manager, self.page_manager)
+
         # 初始化表管理层
         self.table_manager = TableManager(self.catalog, self.record_manager)
 
-        # 初始化SQL处理层
-        self.sql_executor = SQLExecutor(self.table_manager, self.catalog)
+        # 初始化SQL处理层 - 传入索引管理器
+        self.sql_executor = SQLExecutor(
+            self.table_manager, self.catalog, self.index_manager
+        )
 
         print(f"数据库 {db_file} 已连接")
 
@@ -54,8 +60,76 @@ class SimpleDatabase:
                 "message": f"SQL执行失败: {str(e)}",
             }
 
+    # 新增：索引相关的管理方法
+    def create_index(
+        self,
+        index_name: str,
+        table_name: str,
+        column_name: str,
+        is_unique: bool = False,
+    ) -> Dict[str, Any]:
+        """创建索引"""
+        try:
+            success = self.index_manager.create_index(
+                index_name, table_name, column_name, is_unique
+            )
+            if success:
+                return {"success": True, "message": f"索引 {index_name} 创建成功"}
+            else:
+                return {"success": False, "message": f"索引 {index_name} 已存在"}
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"创建索引失败: {str(e)}",
+            }
+
+    def drop_index(self, index_name: str) -> Dict[str, Any]:
+        """删除索引"""
+        try:
+            success = self.index_manager.drop_index(index_name)
+            if success:
+                return {"success": True, "message": f"索引 {index_name} 删除成功"}
+            else:
+                return {"success": False, "message": f"索引 {index_name} 不存在"}
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"删除索引失败: {str(e)}",
+            }
+
+    def list_indexes(self, table_name: str) -> dict:
+        """列出表的所有索引"""
+        if not self.index_manager:
+            return {"success": True, "table_name": table_name, "indexes": []}
+
+        try:
+            table_indexes = self.index_manager.get_table_indexes(table_name)
+            index_list = []
+
+            for index_name in table_indexes:
+                index_info = self.index_manager.indexes.get(index_name)
+                if index_info:
+                    index_list.append(
+                        {
+                            "index_name": index_name,
+                            "column_name": index_info.column_name,
+                            "is_unique": index_info.is_unique,
+                        }
+                    )
+
+            return {"success": True, "table_name": table_name, "indexes": index_list}
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "table_name": table_name,
+                "indexes": [],
+            }
+
     def get_table_info(self, table_name: str) -> Dict[str, Any]:
-        """获取表信息"""
+        """获取表信息 - 扩展版，包含索引信息"""
         schema = self.catalog.get_table_schema(table_name)
         if not schema:
             return {"error": f"表 {table_name} 不存在"}
@@ -73,9 +147,24 @@ class SimpleDatabase:
 
         record_count = self.table_manager.count_records(table_name)
 
+        # 新增：获取表的索引信息
+        table_indexes = self.index_manager.get_table_indexes(table_name)
+        indexes_info = []
+        for index_name in table_indexes:
+            index_info = self.index_manager.indexes.get(index_name)
+            if index_info:
+                indexes_info.append(
+                    {
+                        "name": index_name,
+                        "column": index_info.column_name,
+                        "unique": index_info.is_unique,
+                    }
+                )
+
         return {
             "table_name": table_name,
             "columns": columns_info,
+            "indexes": indexes_info,  # 新增
             "record_count": record_count,
             "pages": self.catalog.get_table_pages(table_name),
         }
@@ -88,10 +177,14 @@ class SimpleDatabase:
         """获取数据库统计信息"""
         cache_stats = self.buffer_manager.get_cache_stats()
 
+        # 新增：统计索引数量
+        total_indexes = len(self.index_manager.indexes)
+
         return {
             "database_file": self.db_file,
             "file_size_pages": self.page_manager.get_file_size(),
             "tables_count": len(self.catalog.list_tables()),
+            "indexes_count": total_indexes,  # 新增
             "cache_stats": cache_stats,
         }
 

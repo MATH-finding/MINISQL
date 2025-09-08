@@ -29,6 +29,10 @@ class TokenType(Enum):
     OR = "OR"
     STAR = "STAR"
     DOT = "DOT"
+    UNIQUE = "UNIQUE"
+    INDEX = "INDEX"
+    ON = "ON"
+    DROP = "DROP"
 
     # 布尔值
     TRUE = "TRUE"
@@ -89,6 +93,10 @@ class SQLLexer:
         "OR": TokenType.OR,
         "TRUE": TokenType.TRUE,  # 添加布尔值
         "FALSE": TokenType.FALSE,  # 添加布尔值
+        "UNIQUE": TokenType.UNIQUE,
+        "INDEX": TokenType.INDEX,
+        "ON": TokenType.ON,
+        "DROP": TokenType.DROP,
     }
 
     def __init__(self, sql: str):

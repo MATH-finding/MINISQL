@@ -21,7 +21,9 @@ class SQLParser:
             raise SyntaxError("空的SQL语句")
 
         if self.current_token.type == TokenType.CREATE:
-            return self._parse_create_table()
+            return self._parse_create_statement()  # 改为这个新方法
+        elif self.current_token.type == TokenType.DROP:
+            return self._parse_drop_statement()  # 添加DROP支持
         elif self.current_token.type == TokenType.INSERT:
             return self._parse_insert()
         elif self.current_token.type == TokenType.SELECT:
@@ -290,3 +292,50 @@ class SQLParser:
 
         else:
             raise SyntaxError(f"不期望的token: {self.current_token.value}")
+
+    def _parse_create_statement(self) -> Statement:
+        """解析CREATE语句（TABLE或INDEX）"""
+        self._expect(TokenType.CREATE)
+
+        # 检查是否是UNIQUE INDEX
+        is_unique = False
+        if self.current_token and self.current_token.type == TokenType.UNIQUE:
+            is_unique = True
+            self._advance()
+
+        if self.current_token.type == TokenType.TABLE:
+            # 回退一步，让原有的解析方法处理
+            self.position -= 1
+            self.current_token = self.tokens[self.position]
+            return self._parse_create_table()
+        elif self.current_token.type == TokenType.INDEX:
+            return self._parse_create_index(is_unique)
+        else:
+            raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
+
+    def _parse_create_index(self, is_unique: bool = False) -> CreateIndexStatement:
+        """解析CREATE [UNIQUE] INDEX语句"""
+        self._expect(TokenType.INDEX)
+
+        index_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.ON)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+
+        self._expect(TokenType.LEFT_PAREN)
+        column_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.RIGHT_PAREN)
+
+        return CreateIndexStatement(index_name, table_name, column_name, is_unique)
+
+    def _parse_drop_statement(self) -> Statement:
+        """解析DROP语句"""
+        self._expect(TokenType.DROP)
+
+        if self.current_token.type == TokenType.INDEX:
+            self._advance()
+            index_name = self._expect(TokenType.IDENTIFIER).value
+            return DropIndexStatement(index_name)
+        else:
+            raise SyntaxError(
+                f"目前只支持DROP INDEX，但得到DROP {self.current_token.value}"
+            )
