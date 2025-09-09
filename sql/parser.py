@@ -72,7 +72,7 @@ class SQLParser:
         return CreateTableStatement(table_name, columns)
 
     def _parse_column_definition(self) -> dict:
-        """解析列定义"""
+        """解析列定义，支持DEFAULT、CHECK、FOREIGN KEY"""
         column_name = self._expect(TokenType.IDENTIFIER).value
 
         # 解析数据类型
@@ -104,10 +104,17 @@ class SQLParser:
 
         # 解析约束
         constraints = []
+        default = None
+        check = None
+        foreign_key = None
         while self.current_token and self.current_token.type in (
             TokenType.PRIMARY,
             TokenType.NOT,
             TokenType.NULL,
+            TokenType.UNIQUE,
+            TokenType.DEFAULT,
+            TokenType.CHECK,
+            TokenType.FOREIGN,
         ):
             if self.current_token.type == TokenType.PRIMARY:
                 self._advance()
@@ -120,12 +127,52 @@ class SQLParser:
             elif self.current_token.type == TokenType.NULL:
                 self._advance()
                 constraints.append("NULL")
+            elif self.current_token.type == TokenType.UNIQUE:
+                self._advance()
+                constraints.append("UNIQUE")
+            elif self.current_token.type == TokenType.DEFAULT:
+                self._advance()
+                # 支持数字、字符串、布尔、NULL
+                if self.current_token.type == TokenType.NUMBER:
+                    default = self.current_token.value
+                    self._advance()
+                elif self.current_token.type == TokenType.STRING:
+                    default = self.current_token.value
+                    self._advance()
+                elif self.current_token.type == TokenType.TRUE:
+                    default = True
+                    self._advance()
+                elif self.current_token.type == TokenType.FALSE:
+                    default = False
+                    self._advance()
+                elif self.current_token.type == TokenType.NULL:
+                    default = None
+                    self._advance()
+                else:
+                    raise SyntaxError(f"不支持的DEFAULT值: {self.current_token.value}")
+            elif self.current_token.type == TokenType.CHECK:
+                self._advance()
+                self._expect(TokenType.LEFT_PAREN)
+                check = self._parse_expression()
+                self._expect(TokenType.RIGHT_PAREN)
+            elif self.current_token.type == TokenType.FOREIGN:
+                self._advance()
+                self._expect(TokenType.KEY)
+                self._expect(TokenType.REFERENCES)
+                ref_table = self._expect(TokenType.IDENTIFIER).value
+                self._expect(TokenType.LEFT_PAREN)
+                ref_column = self._expect(TokenType.IDENTIFIER).value
+                self._expect(TokenType.RIGHT_PAREN)
+                foreign_key = {"ref_table": ref_table, "ref_column": ref_column}
 
         return {
             "name": column_name,
             "type": data_type,
             "length": length,
             "constraints": constraints,
+            "default": default,
+            "check": check,
+            "foreign_key": foreign_key,
         }
 
     def _parse_insert(self) -> InsertStatement:

@@ -53,6 +53,10 @@ class TokenType(Enum):
     UPDATE = "UPDATE"
     DELETE = "DELETE"
     SET = "SET"
+    DEFAULT = "DEFAULT"
+    CHECK = "CHECK"
+    FOREIGN = "FOREIGN"
+    REFERENCES = "REFERENCES"
 
     # 布尔值
     TRUE = "TRUE"
@@ -137,6 +141,10 @@ class SQLLexer:
         "UPDATE": TokenType.UPDATE,
         "DELETE": TokenType.DELETE,
         "SET": TokenType.SET,
+        "DEFAULT": TokenType.DEFAULT,
+        "CHECK": TokenType.CHECK,
+        "FOREIGN": TokenType.FOREIGN,
+        "REFERENCES": TokenType.REFERENCES,
     }
 
     def __init__(self, sql: str):

@@ -25,7 +25,7 @@ class SimpleDatabase:
         self.catalog = SystemCatalog(self.buffer_manager)
 
         # 添加索引管理器
-        self.index_manager = IndexManager(self.buffer_manager, self.page_manager)
+        self.index_manager = IndexManager(self.buffer_manager, self.page_manager, self.catalog)
 
         # 初始化表管理层
         self.table_manager = TableManager(self.catalog, self.record_manager)

@@ -34,6 +34,10 @@ class ColumnDefinition:
         max_length: int = None,
         nullable: bool = True,
         primary_key: bool = False,
+        unique: bool = False,
+        default: Any = None,  # 新增
+        check: Any = None,    # 新增
+        foreign_key: dict = None,  # 新增
         precision: int = None,
         scale: int = None,
     ):
@@ -42,6 +46,10 @@ class ColumnDefinition:
         self.max_length = max_length  # VARCHAR类型使用
         self.nullable = nullable
         self.primary_key = primary_key
+        self.unique = unique
+        self.default = default  # 新增
+        self.check = check      # 新增
+        self.foreign_key = foreign_key  # 新增
         self.precision = precision  # DECIMAL类型使用
         self.scale = scale        # DECIMAL类型使用
 

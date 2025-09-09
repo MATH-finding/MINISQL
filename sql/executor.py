@@ -77,6 +77,10 @@ class SQLExecutor:
             # 解析约束
             nullable = True
             primary_key = False
+            unique = False
+            default = col_def.get("default")
+            check = col_def.get("check")
+            foreign_key = col_def.get("foreign_key")
 
             for constraint in col_def["constraints"]:
                 if constraint == "NOT NULL":
@@ -84,6 +88,8 @@ class SQLExecutor:
                 elif constraint == "PRIMARY KEY":
                     primary_key = True
                     nullable = False
+                elif constraint == "UNIQUE":
+                    unique = True
 
             column = ColumnDefinition(
                 name=col_def["name"],
@@ -91,6 +97,10 @@ class SQLExecutor:
                 max_length=col_def["length"],
                 nullable=nullable,
                 primary_key=primary_key,
+                unique=unique,
+                default=default,
+                check=check,
+                foreign_key=foreign_key,
             )
             columns.append(column)
 
@@ -105,7 +115,7 @@ class SQLExecutor:
         }
 
     def _execute_insert(self, stmt: InsertStatement) -> Dict[str, Any]:
-        """执行INSERT - 修复版，正确处理记录ID"""
+        """执行INSERT - 统一唯一性索引校验，支持DEFAULT、CHECK、FOREIGN KEY"""
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
@@ -117,6 +127,7 @@ class SQLExecutor:
             record_data = {}
 
             if stmt.columns:
+                # 指定了列名
                 if len(stmt.columns) != len(value_row):
                     raise ValueError("列数和值数不匹配")
 
@@ -124,6 +135,7 @@ class SQLExecutor:
                     value = self._evaluate_expression(value_row[i], {})
                     record_data[col_name] = value
             else:
+                # 未指定列名，按顺序插入所有列
                 if len(value_row) != len(schema.columns):
                     raise ValueError("值数和表列数不匹配")
 
@@ -131,29 +143,73 @@ class SQLExecutor:
                     value = self._evaluate_expression(value_row[i], {})
                     record_data[column.name] = value
 
+            # 补全DEFAULT值
+            for column in schema.columns:
+                if column.name not in record_data or record_data[column.name] is None:
+                    if column.default is not None:
+                        # 类型转换：如果是数字类型，转换为int/float
+                        if column.data_type.name in ("INTEGER", "BIGINT", "TINYINT"):
+                            record_data[column.name] = int(column.default)
+                        elif column.data_type.name in ("FLOAT", "DECIMAL"):
+                            record_data[column.name] = float(column.default)
+                        else:
+                            record_data[column.name] = column.default
+                # 如果依然没有值，且不是nullable，报错
+                if column.name not in record_data and not column.nullable:
+                    raise ValueError(f"列 {column.name} 不能为空")
+
+            # 获取所有唯一性索引（主键、UNIQUE列、唯一索引、复合唯一索引）
+            unique_indexes = self.index_manager.get_unique_indexes_for_table(stmt.table_name) if self.index_manager else []
+
+            # 插入前校验所有唯一性约束
+            for index in unique_indexes:
+                index_keys = [record_data.get(col) for col in index.columns]
+                if all(key is not None for key in index_keys):
+                    existing = self.index_manager.lookup(index.name, index_keys)
+                    if existing:
+                        constraint_columns = ', '.join(index.columns)
+                        raise ValueError(f"唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在")
+
+            # 校验CHECK约束
+            for column in schema.columns:
+                if column.check is not None : 
+                    context = record_data.copy()
+                    if not self._evaluate_condition(column.check, context):
+                        raise ValueError(f"CHECK约束不满足: {column.name}")
+            for check_expr in getattr(schema, 'check_constraints', []):
+                context = record_data.copy()
+                if not self._evaluate_condition(check_expr, context):
+                    raise ValueError("表级CHECK约束不满足")
+
+            # 校验FOREIGN KEY约束
+            for column in schema.columns:
+                if column.foreign_key:  
+                    ref_value = record_data.get(column.name)
+                    if ref_value is not None:
+                        ref_table = column.foreign_key["ref_table"]
+                        ref_column = column.foreign_key["ref_column"]
+                        ref_schema = self.catalog.get_table_schema(ref_table)
+                        if not ref_schema:
+                            raise ValueError(f"外键引用表不存在: {ref_table}")
+                        found = False
+                        # 这里的全表扫描效率很低，未来可以用索引优化
+                        for ref_record in self.table_manager.scan_table(ref_table):
+                            if ref_record.data.get(ref_column) == ref_value:
+                                found = True
+                                break
+                        if not found:
+                            raise ValueError(f"外键约束不满足: {column.name} -> {ref_table}({ref_column})")
+            # 插入记录
             try:
-                # 获取插入前的记录数，作为新记录的ID
-                all_records = self.table_manager.scan_table(stmt.table_name)
-                record_id = len(all_records)  # 新记录的ID
+                record_id = self.table_manager.insert_record(
+                    stmt.table_name, record_data
+                )
 
-                # 插入记录到表中
-                self.table_manager.insert_record(stmt.table_name, record_data)
-
-                # 更新索引，使用正确的record_id
+                # 新增：如果有索引管理器，同时更新索引
                 if self.index_manager:
-                    table_indexes = self.index_manager.get_table_indexes(
-                        stmt.table_name
+                    self.index_manager.insert_into_indexes(
+                        stmt.table_name, record_data, record_id
                     )
-                    for index_name in table_indexes:
-                        index_info = self.index_manager.indexes.get(index_name)
-                        if index_info and index_info.column_name in record_data:
-                            btree = self.index_manager.get_index(index_name)
-                            if btree:
-                                key = record_data[index_info.column_name]
-                                btree.insert(key, record_id)  # 存储正确的记录ID
-                                print(
-                                    f"DEBUG: 索引更新 {index_name}: {key} -> {record_id}"
-                                )
 
                 inserted_count += 1
             except Exception as e:
@@ -253,7 +309,12 @@ class SQLExecutor:
             result_records = []
             for record in filtered_records:
                 if stmt.columns == ["*"]:
-                    result_records.append(dict(record.data))
+                    # 返回所有表结构定义的字段
+                    row = {}
+                    schema = self.catalog.get_table_schema(from_name if isinstance(from_name, str) else stmt.from_table)
+                    for col in schema.columns:
+                        row[col.name] = record.data.get(col.name)
+                    result_records.append(row)
                 else:
                     selected_data = {}
                     for col in stmt.columns:

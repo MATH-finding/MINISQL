@@ -9,11 +9,13 @@ from .data_types import ColumnDefinition
 class TableSchema:
     """表结构定义"""
 
-    def __init__(self, table_name: str, columns: List[ColumnDefinition]):
+    def __init__(self, table_name: str, columns: List[ColumnDefinition], check_constraints=None, foreign_keys=None):
         self.table_name = table_name
         self.columns = columns
         self.column_map = {col.name: i for i, col in enumerate(columns)}
         self.primary_key_columns = [col.name for col in columns if col.primary_key]
+        self.check_constraints = check_constraints or []
+        self.foreign_keys = foreign_keys or []
 
     def get_column(self, column_name: str) -> Optional[ColumnDefinition]:
         """获取列定义"""

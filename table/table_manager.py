@@ -10,7 +10,7 @@ from catalog import SystemCatalog, ColumnDefinition
 class TableManager:
     """表管理器，提供表级别的操作接口"""
 
-    def __init__(self, catalog: SystemCatalog, record_manager: RecordManager):
+    def __init__(self, catalog, record_manager):
         self.catalog = catalog
         self.record_manager = record_manager
 
@@ -34,7 +34,7 @@ class TableManager:
             for existing in existing_records:
                 pk_match = True
                 for pk_col in schema.primary_key_columns:
-                    if existing.get(pk_col) != record_data.get(pk_col):
+                    if existing.data.get(pk_col) != record_data.get(pk_col):
                         pk_match = False
                         break
                 if pk_match:

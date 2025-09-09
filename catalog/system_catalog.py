@@ -10,8 +10,6 @@ from .schema import TableSchema
 
 
 class SystemCatalog:
-    """系统目录，管理元数据"""
-
     def __init__(self, buffer_manager: BufferManager):
         self.buffer_manager = buffer_manager
         self.tables: Dict[str, TableSchema] = {}

@@ -86,14 +86,13 @@ class AggregateFunction(Expression):
 class CreateTableStatement(Statement):
     """CREATE TABLE 语句"""
 
-    def __init__(self, table_name: str, columns: List[Dict[str, Any]]):
+    def __init__(self, table_name: str, columns: List[Dict[str, Any]], table_constraints: List[dict] = None):
         self.table_name = table_name
-        self.columns = (
-            columns  # [{'name': str, 'type': str, 'length': int, 'constraints': [str]}]
-        )
+        self.columns = columns  # [{'name': str, 'type': str, 'length': int, 'constraints': [str]}]
+        self.table_constraints = table_constraints or []
 
     def __repr__(self):
-        return f"CREATE TABLE {self.table_name} ({self.columns})"
+        return f"CREATE TABLE {self.table_name} ({self.columns}, {self.table_constraints})"
 
 
 class InsertStatement(Statement):

@@ -236,6 +236,184 @@ def test_aggregate():
         traceback.print_exc()
 
 
+def test_unique_constraint():
+    """测试UNIQUE约束"""
+    print("\n=== 测试UNIQUE约束 ===")
+    from interface.database import SimpleDatabase
+    db = SimpleDatabase("test_unique.db")
+    try:
+        db.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, email VARCHAR(50) UNIQUE, name VARCHAR(20))")
+        # 插入唯一email
+        result = db.execute_sql("INSERT INTO users (id, email, name) VALUES (1, 'a@example.com', 'Alice')")
+        print(f"插入1: {result}")
+        result = db.execute_sql("INSERT INTO users (id, email, name) VALUES (2, 'b@example.com', 'Bob')")
+        print(f"插入2: {result}")
+        # 插入重复email应报错
+        try:
+            db.execute_sql("INSERT INTO users (id, email, name) VALUES (3, 'a@example.com', 'Charlie')")
+            print("❌ 未检测到唯一约束冲突")
+        except Exception as e:
+            print(f"✅ 检测到唯一约束冲突: {e}")
+        # 插入重复主键应报错
+        try:
+            db.execute_sql("INSERT INTO users (id, email, name) VALUES (1, 'c@example.com', 'Cathy')")
+            print("❌ 未检测到主键冲突")
+        except Exception as e:
+            print(f"✅ 检测到主键冲突: {e}")
+        # 插入重复email和主键都冲突
+        try:
+            db.execute_sql("INSERT INTO users (id, email, name) VALUES (2, 'b@example.com', 'Bobby')")
+            print("❌ 未检测到主键和唯一约束冲突")
+        except Exception as e:
+            print(f"✅ 检测到主键或唯一约束冲突: {e}")
+    finally:
+        db.close()
+        if os.path.exists("test_unique.db"):
+            os.remove("test_unique.db")
+
+
+def test_index_unique_constraint():
+    """测试索引唯一性约束"""
+    print("\n=== 测试索引唯一性约束 ===")
+    from interface.database import SimpleDatabase
+    db = SimpleDatabase("test_idx_unique.db")
+    try:
+        db.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name VARCHAR(20))")
+        db.execute_sql("CREATE UNIQUE INDEX idx_name ON t (name)")
+        # 插入唯一name
+        result = db.execute_sql("INSERT INTO t (id, name) VALUES (1, 'Alice')")
+        print(f"插入1: {result}")
+        result = db.execute_sql("INSERT INTO t (id, name) VALUES (2, 'Bob')")
+        print(f"插入2: {result}")
+        # 插入重复name应报错
+        try:
+            db.execute_sql("INSERT INTO t (id, name) VALUES (3, 'Alice')")
+            print("❌ 未检测到索引唯一性冲突")
+        except Exception as e:
+            print(f"✅ 检测到索引唯一性冲突: {e}")
+        # 再次插入已存在name
+        try:
+            db.execute_sql("INSERT INTO t (id, name) VALUES (4, 'Bob')")
+            print("❌ 未检测到索引唯一性冲突2")
+        except Exception as e:
+            print(f"✅ 检测到索引唯一性冲突2: {e}")
+        # 插入主键冲突
+        try:
+            db.execute_sql("INSERT INTO t (id, name) VALUES (1, 'Charlie')")
+            print("❌ 未检测到主键冲突")
+        except Exception as e:
+            print(f"✅ 检测到主键冲突: {e}")
+    finally:
+        db.close()
+        if os.path.exists("test_idx_unique.db"):
+            os.remove("test_idx_unique.db")
+
+
+def test_default_check_foreign():
+    """测试DEFAULT、CHECK、FOREIGN KEY约束"""
+    print("\n=== 测试DEFAULT、CHECK、FOREIGN KEY约束 ===")
+    from interface.database import SimpleDatabase
+    db = SimpleDatabase("test_constraint.db")
+    try:
+        # 测试DEFAULT
+        db.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, name VARCHAR(20) DEFAULT 'unknown', age INTEGER DEFAULT 18)")
+        result = db.execute_sql("INSERT INTO t1 (id) VALUES (1)")
+        print(f"DEFAULT插入: {result}")
+        res = db.execute_sql("SELECT * FROM t1")
+        print(f"DEFAULT结果: {res['data']}")
+        assert res['data'][0]['name'] == 'unknown' and res['data'][0]['age'] == 18
+
+        """全面测试 CHECK 约束"""
+        db.execute_sql("""
+            CREATE TABLE products (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                price REAL CHECK (price > 0),
+                stock INTEGER CHECK (stock >= 0)
+            )
+        """)
+        print("    SETUP: 'products' 表创建成功.")
+
+        # --- 成功场景 ---
+        print("\n  --- 测试成功场景 ---")
+        db.execute_sql("INSERT INTO products VALUES (1, 'Apple', 1.5, 100)")
+        print("    ✅ PASSED: 成功插入完全合法的数据。")
+        db.execute_sql("INSERT INTO products VALUES (2, 'Banana', 0.8, 0)")
+        print("    ✅ PASSED: 成功插入边界值 (stock = 0)。")
+
+        # --- 失败场景 ---
+        print("\n  --- 测试失败场景 (预期会抛出异常) ---")
+        try:
+            db.execute_sql("INSERT INTO products VALUES (3, 'Lemon', -1, 50)")
+            raise AssertionError("❌ FAILED: 未能阻止插入不满足 CHECK 的负数价格。")
+        except Exception as e:
+            print(f"    ✅ PASSED: 成功阻止插入负数价格。错误: {type(e).__name__}")
+
+        try:
+            db.execute_sql("INSERT INTO products VALUES (4, 'Orange', 2.0, -10)")
+            raise AssertionError("❌ FAILED: 未能阻止插入不满足 CHECK 的负数库存。")
+        except Exception as e:
+            print(f"    ✅ PASSED: 成功阻止插入负数库存。错误: {type(e).__name__}")
+            
+        try:
+            db.execute_sql("UPDATE products SET price = 0 WHERE id = 1")
+            raise AssertionError("❌ FAILED: UPDATE 操作未能触发 CHECK 约束。")
+        except Exception as e:
+            print(f"    ✅ PASSED: UPDATE 操作成功触发 CHECK 约束。错误: {type(e).__name__}")
+
+
+        """全面测试 FOREIGN KEY 约束"""
+        # --- Setup ---
+        db.execute_sql("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+        db.execute_sql("""
+            CREATE TABLE products_fk (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                category_id INTEGER,
+                FOREIGN KEY (category_id) REFERENCES categories(id)
+            )
+        """)
+        db.execute_sql("INSERT INTO categories VALUES (10, 'Fruits')")
+        db.execute_sql("INSERT INTO categories VALUES (20, 'Vegetables')")
+        print("    SETUP: 'categories' 和 'products_fk' 表创建成功并已填充主表数据。")
+
+        # --- 成功场景 ---
+        print("\n  --- 测试成功场景 ---")
+        db.execute_sql("INSERT INTO products_fk VALUES (101, 'Apple', 10)")
+        print("    ✅ PASSED: 成功插入合法的外键引用。")
+        
+        # 根据SQL标准，外键为NULL是允许的
+        db.execute_sql("INSERT INTO products_fk VALUES (102, 'Orphan Product', NULL)")
+        print("    ✅ PASSED: 成功插入外键为 NULL 的记录。")
+        
+        # --- 失败场景 ---
+        print("\n  --- 测试失败场景 (预期会抛出异常) ---")
+        try:
+            db.execute_sql("INSERT INTO products_fk VALUES (103, 'Cabbage', 99)")
+            raise AssertionError("❌ FAILED: 未能阻止插入不存在的外键值。")
+        except Exception as e:
+            print(f"    ✅ PASSED: 成功阻止插入不存在的外键。错误: {type(e).__name__}")
+            
+        try:
+            db.execute_sql("UPDATE products_fk SET category_id = 88 WHERE id = 101")
+            raise AssertionError("❌ FAILED: UPDATE 操作未能触发外键约束。")
+        except Exception as e:
+            print(f"    ✅ PASSED: UPDATE 操作成功触发外键约束。错误: {type(e).__name__}")
+
+        # 这是一个更高级的测试，测试当父表记录被删除时，是否能保护子表数据
+        # 注意：这依赖于你的 DELETE 实现是否检查了外键引用
+        try:
+            db.execute_sql("DELETE FROM categories WHERE id = 10")
+            raise AssertionError("❌ FAILED: 未能阻止删除被引用的父表记录。")
+        except Exception as e:
+            print(f"    ✅ PASSED: 成功阻止删除被引用的父表记录。错误: {type(e).__name__}")
+
+    finally:
+        db.close()
+        if os.path.exists("test_constraint.db"):
+            os.remove("test_constraint.db")
+
+
 def main():
     print("🧪 索引解析测试工具")
     print("=" * 40)
@@ -245,6 +423,9 @@ def main():
     test_integration()
     test_join()  # 新增JOIN测试
     test_aggregate()  # 新增聚合函数测试
+    test_unique_constraint()  # 新增UNIQUE约束测试
+    test_index_unique_constraint()  # 新增索引唯一性约束测试
+    test_default_check_foreign()  # 新增DEFAULT、CHECK、FOREIGN KEY测试
 
     print("\n✅ 测试完成")
 
