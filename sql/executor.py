@@ -56,6 +56,14 @@ class SQLExecutor:
                 "VARCHAR": DataType.VARCHAR,
                 "FLOAT": DataType.FLOAT,
                 "BOOLEAN": DataType.BOOLEAN,
+                "CHAR": DataType.CHAR,
+                "DECIMAL": DataType.DECIMAL,
+                "DATE": DataType.DATE,
+                "TIME": DataType.TIME,
+                "DATETIME": DataType.DATETIME,
+                "BIGINT": DataType.BIGINT,
+                "TINYINT": DataType.TINYINT,
+                "TEXT": DataType.TEXT,
             }
 
             data_type = data_type_map.get(col_def["type"])

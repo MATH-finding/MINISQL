@@ -21,6 +21,14 @@ class TokenType(Enum):
     VARCHAR = "VARCHAR"
     FLOAT = "FLOAT"
     BOOLEAN = "BOOLEAN"
+    CHAR = "CHAR"
+    DECIMAL = "DECIMAL"
+    DATE = "DATE"
+    TIME = "TIME"
+    DATETIME = "DATETIME"
+    BIGINT = "BIGINT"
+    TINYINT = "TINYINT"
+    TEXT = "TEXT"
     PRIMARY = "PRIMARY"
     KEY = "KEY"
     NOT = "NOT"
@@ -86,6 +94,14 @@ class SQLLexer:
         "FLOAT": TokenType.FLOAT,
         "BOOLEAN": TokenType.BOOLEAN,
         "PRIMARY": TokenType.PRIMARY,
+        "CHAR": TokenType.CHAR,
+        "DECIMAL": TokenType.DECIMAL,
+        "DATE": TokenType.DATE,
+        "TIME": TokenType.TIME,
+        "DATETIME": TokenType.DATETIME,
+        "BIGINT": TokenType.BIGINT,
+        "TINYINT": TokenType.TINYINT,
+        "TEXT": TokenType.TEXT,
         "KEY": TokenType.KEY,
         "NOT": TokenType.NOT,
         "NULL": TokenType.NULL,

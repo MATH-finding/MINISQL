@@ -74,10 +74,9 @@ class SQLParser:
 
         # 解析数据类型
         if self.current_token.type in (
-            TokenType.INTEGER,
-            TokenType.VARCHAR,
-            TokenType.FLOAT,
-            TokenType.BOOLEAN,
+            TokenType.INTEGER, TokenType.VARCHAR, TokenType.FLOAT, TokenType.BOOLEAN,
+            TokenType.CHAR, TokenType.DECIMAL, TokenType.DATE, TokenType.TIME,
+            TokenType.DATETIME, TokenType.BIGINT, TokenType.TINYINT, TokenType.TEXT,
         ):
             data_type = self.current_token.value.upper()
             self._advance()
@@ -86,9 +85,18 @@ class SQLParser:
 
         # 解析长度（对于VARCHAR）
         length = None
-        if data_type == "VARCHAR" and self.current_token.type == TokenType.LEFT_PAREN:
+        precision = None
+        scale = None
+        if data_type in ("VARCHAR", "CHAR") and self.current_token.type == TokenType.LEFT_PAREN:
             self._advance()
             length = int(self._expect(TokenType.NUMBER).value)
+            self._expect(TokenType.RIGHT_PAREN)
+        elif data_type == "DECIMAL" and self.current_token.type == TokenType.LEFT_PAREN:
+            self._advance()
+            precision = int(self._expect(TokenType.NUMBER).value)
+            if self.current_token.type == TokenType.COMMA:
+                self._advance()
+                scale = int(self._expect(TokenType.NUMBER).value)
             self._expect(TokenType.RIGHT_PAREN)
 
         # 解析约束
