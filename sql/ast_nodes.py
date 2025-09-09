@@ -73,6 +73,15 @@ class LogicalOp(Expression):
         return f"({self.left} {self.operator} {self.right})"
 
 
+class AggregateFunction(Expression):
+    """聚合函数表达式，如COUNT(col), SUM(col)等"""
+    def __init__(self, func_name: str, arg: Any):
+        self.func_name = func_name.upper()
+        self.arg = arg  # 可以是ColumnRef、'*'等
+    def __repr__(self):
+        return f"{self.func_name}({self.arg})"
+
+
 # 语句节点
 class CreateTableStatement(Statement):
     """CREATE TABLE 语句"""
@@ -107,11 +116,11 @@ class SelectStatement(Statement):
     def __init__(
         self,
         columns: List[Union[ColumnRef, str]],
-        from_table: str,
+        from_table: Union[str, 'JoinClause'],  # 修改为支持JoinClause
         where_clause: Optional[Expression] = None,
     ):
         self.columns = columns  # 选择的列，'*' 表示所有列
-        self.from_table = from_table  # 表名
+        self.from_table = from_table  # 表名或JoinClause
         self.where_clause = where_clause  # WHERE条件
 
     def __repr__(self):
@@ -169,6 +178,23 @@ class DropIndexStatement(Statement):
         self.index_name = index_name
 
 
+class JoinClause(ASTNode):
+    """
+    JOIN子句AST节点
+    left: 左表（表名str或JoinClause）
+    right: 右表（表名str）
+    join_type: 连接类型（如'INNER', 'LEFT'等）
+    on: 连接条件（Expression）
+    """
+    def __init__(self, left: Union[str, 'JoinClause'], right: str, join_type: str, on: Expression):
+        self.left = left
+        self.right = right
+        self.join_type = join_type  # 'INNER', 'LEFT', ...
+        self.on = on
+
+    def __repr__(self):
+        return f"({self.left} {self.join_type} JOIN {self.right} ON {self.on})"
+        
 class UpdateStatement(Statement):
     """UPDATE 语句"""
 

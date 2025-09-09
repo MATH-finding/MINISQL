@@ -30,13 +30,19 @@ class SQLShell:
                     self._process_command(user_input)
             except KeyboardInterrupt:
                 print("\n正在保存数据...")
-                self.database.flush_all()  # 强制保存
-                print("数据已保存，再见！")
+                try:
+                    self.database.flush_all()
+                    print("💾 数据已保存，再见！")
+                except Exception as e:
+                    print(f"⚠️ 保存数据时出错: {e}")
                 break
             except EOFError:
                 print("\n正在保存数据...")
-                self.database.flush_all()  # 强制保存
-                print("数据已保存，再见！")
+                try:
+                    self.database.flush_all()
+                    print("💾 数据已保存，再见！")
+                except Exception as e:
+                    print(f"⚠️ 保存数据时出错: {e}")
                 break
 
     def _get_input(self) -> Optional[str]:
@@ -98,8 +104,11 @@ class SQLShell:
         # 内置命令
         if command.lower() in ("quit", "exit"):
             print("正在保存数据...")
-            self.database.flush_all()  # 退出前保存
-            print("数据已保存，再见！")
+            try:
+                self.database.flush_all()
+                print("💾 数据已保存，再见！")
+            except Exception as e:
+                print(f"⚠️ 保存数据时出错: {e}")
             self.running = False
             return
 
@@ -118,6 +127,14 @@ class SQLShell:
             self._describe_table(table_name)
             return
 
+        # show table_name 命令
+        if command.lower().startswith("show "):
+            parts = command.split()
+            if len(parts) >= 2:
+                table_name = parts[1]
+                self._show_table_data(table_name)
+                return
+
         if command.lower().startswith("indexes"):
             parts = command.split()
             table_name = parts[1] if len(parts) > 1 else None
@@ -126,6 +143,20 @@ class SQLShell:
 
         if command.lower() == "stats":
             self._show_stats()
+            return
+
+        # 新增：日志相关命令
+        if command.lower().startswith("log level "):
+            level = command.split()[2] if len(command.split()) > 2 else ""
+            self._set_log_level(level)
+            return
+
+        if command.lower() == "log stats":
+            self._show_log_stats()
+            return
+
+        if command.lower() == "cache stats":
+            self._show_cache_stats()
             return
 
         if command.lower() == "clear":
@@ -152,8 +183,72 @@ class SQLShell:
                 autocommit = True
             if autocommit and not in_txn:
                 self.database.flush_all()
+        # 对于所有可能修改数据的操作，都强制保存
+        if any(
+            command.upper().startswith(cmd)
+            for cmd in ["CREATE", "INSERT", "UPDATE", "DELETE", "DROP"]
+        ):
+            try:
+                self.database.flush_all()
+                print("💾 数据已保存")
+            except Exception as e:
+                print(f"⚠️ 保存数据时出错: {e}")
 
         print()  # 空行
+
+    def _show_table_data(self, table_name: str):
+        """显示表的所有数据"""
+        try:
+            result = self.database.execute_sql(f"SELECT * FROM {table_name}")
+            if result.get("success"):
+                print(f"表 '{table_name}' 的数据:")
+                format_query_result(result)
+            else:
+                print(f"❌ 错误: {result.get('message', '未知错误')}")
+        except Exception as e:
+            print(f"❌ 查询表数据时出错: {e}")
+
+    def _set_log_level(self, level: str):
+        """设置日志级别"""
+        if not level:
+            print("请指定日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+            return
+
+        result = self.database.set_log_level(level)
+        if result.get("success"):
+            print(f"✅ {result['message']}")
+        else:
+            print(f"❌ {result['message']}")
+
+    def _show_log_stats(self):
+        """显示日志统计信息"""
+        try:
+            log_stats = self.database.get_log_stats()
+            print("📊 日志统计信息:")
+            print(f"  日志文件: {log_stats['log_file']}")
+            print(f"  当前日志级别: {log_stats['current_log_level']}")
+            print(f"  缓存命中次数: {log_stats['cache_hits']}")
+            print(f"  缓存未命中次数: {log_stats['cache_misses']}")
+            print(f"  缓存命中率: {log_stats['hit_rate']:.2%}")
+        except Exception as e:
+            print(f"❌ 获取日志统计失败: {e}")
+
+    def _show_cache_stats(self):
+        """显示缓存详细统计"""
+        try:
+            cache_stats = self.database.buffer_manager.get_detailed_stats()
+            print("🗂️ 缓存详细统计:")
+            print(f"  缓存大小: {cache_stats['cache_size']} 页")
+            print(f"  已缓存页面: {cache_stats['cached_pages']} 页")
+            print(f"  空闲槽位: {cache_stats['free_slots']} 页")
+            print(f"  固定页面: {cache_stats['pinned_pages']} 页")
+            print(f"  脏页面: {cache_stats['dirty_pages']} 页")
+            print(f"  缓存命中: {cache_stats['cache_hits']} 次")
+            print(f"  缓存未命中: {cache_stats['cache_misses']} 次")
+            print(f"  总请求: {cache_stats['total_requests']} 次")
+            print(f"  命中率: {cache_stats['hit_rate']:.2%}")
+        except Exception as e:
+            print(f"❌ 获取缓存统计失败: {e}")
 
     def _show_help(self):
         """显示帮助信息"""
@@ -177,6 +272,8 @@ class SQLShell:
   \\session list                                      - 列出会话
   \\session new                                       - 新建会话
   \\session use <id>                                  - 切换会话
+  UPDATE table_name SET col=value [WHERE condition]    - 更新数据
+  DELETE FROM table_name [WHERE condition]             - 删除数据
   
 🔍 索引操作:
   CREATE INDEX index_name ON table_name (column)       - 创建索引
@@ -186,8 +283,16 @@ class SQLShell:
 📊 系统命令:
   tables                     - 列出所有表
   describe <table>           - 查看表结构 (可简写为 desc)
+  show <table>               - 查看表数据内容 (等同于 SELECT * FROM table)
   indexes [table_name]       - 查看索引信息
   stats                      - 显示数据库统计信息
+  
+📝 日志命令:
+  log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+  log stats                  - 显示日志统计信息
+  cache stats                - 显示详细缓存统计信息
+  
+🛠️ 其他命令:
   help, ?                    - 显示此帮助
   clear                      - 清屏
   quit, exit                 - 退出Shell
@@ -205,10 +310,13 @@ class SQLShell:
 
 💡 示例:
   CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50));
+  INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+  show users                           -- 查看表数据
+  UPDATE users SET name = 'NewName' WHERE id = 1;
+  DELETE FROM users WHERE id = 2;
   CREATE INDEX idx_user_id ON users (id);
-  INSERT INTO users VALUES (1, 'Alice');
-  SELECT * FROM users WHERE id = 1;
-  DROP INDEX idx_user_id;
+  log level DEBUG                      -- 设置调试级别日志
+  cache stats                          -- 查看缓存详情
         """
         )
 

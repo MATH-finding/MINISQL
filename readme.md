@@ -2,7 +2,7 @@
 
 ## 新特性 - B+树索引
 
-拓展：1. 查询优化器2. 并发控制3. 高级索引4. 数据压缩5. 分区表
+拓展：1. 查询优化器 2. 并发控制 3. 高级索引 4. 数据压缩 5. 分区表 6.可视化
 
 ### 索引操作
 - `CREATE INDEX index_name ON table_name (column_name)` - 创建普通索引
@@ -118,6 +118,10 @@ simple_database/
     ├── database.py          # 数据库主接口
     ├── shell.py             # 交互式Shell
     └── formatter.py         # 结果格式化
+└── logging/                  
+    ├── __init__.py
+    ├── logger.py            # 核心日志器
+    └── log_manager.py       # 日志管理器
 
 🔧 技术细节
 存储引擎

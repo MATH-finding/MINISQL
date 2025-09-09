@@ -2,12 +2,15 @@
 数据库主接口
 """
 
+import os
+import time
 from typing import Dict, Any
 from storage import PageManager, BufferManager, RecordManager
 from catalog import SystemCatalog
-from catalog.index_manager import IndexManager  # 新增导入
+from catalog.index_manager import IndexManager
 from table import TableManager
 from sql import SQLLexer, SQLParser, SQLExecutor
+from logging import LogManager, LogLevel
 
 
 class SimpleDatabase:
@@ -16,9 +19,17 @@ class SimpleDatabase:
     def __init__(self, db_file: str, cache_size: int = 100):
         self.db_file = db_file
 
+        # 初始化日志管理器
+        db_name = os.path.splitext(os.path.basename(db_file))[0]
+        self.log_manager = LogManager(db_name)
+
         # 初始化存储层
         self.page_manager = PageManager(db_file)
         self.buffer_manager = BufferManager(self.page_manager, cache_size)
+
+        # 将日志管理器传递给buffer_manager
+        self.buffer_manager.set_log_manager(self.log_manager)
+
         self.record_manager = RecordManager(self.buffer_manager)
 
         # 初始化目录层
@@ -36,6 +47,7 @@ class SimpleDatabase:
         self.new_session()  # 默认创建一个会话
 
         print(f"数据库 {db_file} 已连接")
+        self.log_manager.logger.info(f"数据库系统初始化完成，缓存大小: {cache_size}")
 
     def new_session(self) -> int:
         executor = SQLExecutor(self.table_manager, self.catalog, self.index_manager)
@@ -67,6 +79,9 @@ class SimpleDatabase:
         return self._executors[self._current_session]
 
     def execute_sql(self, sql: str) -> Dict[str, Any]:
+        """执行SQL语句"""
+        start_time = time.time()
+
         """执行SQL语句（路由到当前会话）"""
         try:
             lexer = SQLLexer(sql.strip())
@@ -74,8 +89,18 @@ class SimpleDatabase:
             parser = SQLParser(tokens)
             ast = parser.parse()
             result = self.sql_executor.execute(ast)
+
+            # 记录执行成功日志
+            execution_time = (time.time() - start_time) * 1000  # 转换为毫秒
+            result_count = len(result.get("data", [])) if result.get("data") else 0
+            self.log_manager.log_sql_execution(sql, True, execution_time, result_count)
+
             return result
         except Exception as e:
+            # 记录执行失败日志
+            execution_time = (time.time() - start_time) * 1000
+            self.log_manager.log_sql_execution(sql, False, execution_time)
+
             return {
                 "success": False,
                 "error": str(e),
@@ -96,10 +121,15 @@ class SimpleDatabase:
                 index_name, table_name, column_name, is_unique
             )
             if success:
+                # 记录索引创建日志
+                self.log_manager.log_index_operation("创建", index_name, table_name)
                 return {"success": True, "message": f"索引 {index_name} 创建成功"}
             else:
                 return {"success": False, "message": f"索引 {index_name} 已存在"}
         except Exception as e:
+            self.log_manager.log_error(
+                "INDEX_MANAGER", f"创建索引{index_name}失败", str(e)
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -109,12 +139,21 @@ class SimpleDatabase:
     def drop_index(self, index_name: str) -> Dict[str, Any]:
         """删除索引"""
         try:
+            # 获取索引信息用于日志
+            index_info = self.index_manager.indexes.get(index_name)
+            table_name = index_info.table_name if index_info else ""
+
             success = self.index_manager.drop_index(index_name)
             if success:
+                # 记录索引删除日志
+                self.log_manager.log_index_operation("删除", index_name, table_name)
                 return {"success": True, "message": f"索引 {index_name} 删除成功"}
             else:
                 return {"success": False, "message": f"索引 {index_name} 不存在"}
         except Exception as e:
+            self.log_manager.log_error(
+                "INDEX_MANAGER", f"删除索引{index_name}失败", str(e)
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -143,6 +182,9 @@ class SimpleDatabase:
 
             return {"success": True, "table_name": table_name, "indexes": index_list}
         except Exception as e:
+            self.log_manager.log_error(
+                "INDEX_MANAGER", f"列出表{table_name}索引失败", str(e)
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -212,12 +254,48 @@ class SimpleDatabase:
 
     def flush_all(self):
         """刷新所有缓存到磁盘"""
-        self.buffer_manager.flush_all()
+        try:
+            flushed_count = self.buffer_manager.flush_all()
+            self.log_manager.log_buffer_flush(flushed_count)
+        except Exception as e:
+            self.log_manager.log_error("DATABASE", f"刷新缓存失败: {e}")
+            raise
 
     def close(self):
         """关闭数据库连接"""
         try:
             self.flush_all()
+            self.log_manager.close()
             print(f"数据库 {self.db_file} 已关闭")
         except Exception as e:
             print(f"关闭数据库时发生错误: {e}")
+
+    # 新增：日志相关的管理方法
+    def set_log_level(self, level: str):
+        """设置日志级别"""
+        level_map = {
+            "DEBUG": LogLevel.DEBUG,
+            "INFO": LogLevel.INFO,
+            "WARNING": LogLevel.WARNING,
+            "ERROR": LogLevel.ERROR,
+            "CRITICAL": LogLevel.CRITICAL,
+        }
+
+        if level.upper() in level_map:
+            self.log_manager.set_log_level(level_map[level.upper()])
+            self.log_manager.logger.info(f"日志级别设置为: {level.upper()}")
+            return {"success": True, "message": f"日志级别已设置为 {level.upper()}"}
+        else:
+            return {"success": False, "message": f"无效的日志级别: {level}"}
+
+    def get_log_stats(self) -> Dict[str, Any]:
+        """获取日志统计信息"""
+        cache_stats = self.buffer_manager.get_cache_stats()
+
+        return {
+            "log_file": self.log_manager.logger.log_file,
+            "current_log_level": self.log_manager.logger.min_level.name,
+            "cache_hits": cache_stats.get("cache_hits", 0),
+            "cache_misses": cache_stats.get("cache_misses", 0),
+            "hit_rate": cache_stats.get("hit_rate", 0),
+        }

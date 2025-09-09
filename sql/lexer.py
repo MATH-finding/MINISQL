@@ -41,6 +41,15 @@ class TokenType(Enum):
     INDEX = "INDEX"
     ON = "ON"
     DROP = "DROP"
+    JOIN = "JOIN"
+    INNER = "INNER"
+    LEFT = "LEFT"
+    RIGHT = "RIGHT"
+    COUNT = "COUNT"
+    SUM = "SUM"
+    AVG = "AVG"
+    MIN = "MIN"
+    MAX = "MAX"
     UPDATE = "UPDATE"
     DELETE = "DELETE"
     SET = "SET"
@@ -130,6 +139,15 @@ class SQLLexer:
         "INDEX": TokenType.INDEX,
         "ON": TokenType.ON,
         "DROP": TokenType.DROP,
+        "JOIN": TokenType.JOIN,
+        "INNER": TokenType.INNER,
+        "LEFT": TokenType.LEFT,
+        "RIGHT": TokenType.RIGHT,
+        "COUNT": TokenType.COUNT,
+        "SUM": TokenType.SUM,
+        "AVG": TokenType.AVG,
+        "MIN": TokenType.MIN,
+        "MAX": TokenType.MAX,
         "UPDATE": TokenType.UPDATE,
         "DELETE": TokenType.DELETE,
         "SET": TokenType.SET,
