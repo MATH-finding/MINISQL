@@ -33,13 +33,17 @@ SELECT * FROM users WHERE email = 'user@example.com';
 
 缓存管理: LRU缓存策略，提高I/O性能
 
-数据类型: INTEGER, VARCHAR, FLOAT, BOOLEAN
+数据类型: INTEGER, VARCHAR, FLOAT, BOOLEAN, CHAR
+        DECIMAL, DATE, TIME, DATETIME, BIGINT
+        TINYINT, TEXT
 
 SQL支持: CREATE TABLE, INSERT, SELECT
 
 约束支持: PRIMARY KEY, NOT NULL
 
 条件查询: WHERE子句，支持AND/OR逻辑运算
+
+事务管理: 事务回滚
 
 系统目录: 元数据管理，持久化表结构
 

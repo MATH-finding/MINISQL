@@ -136,3 +136,52 @@ class TableManager:
                         )
 
         return updated_count
+
+    def insert_record_with_location(self, table_name: str, record_data: Dict[str, Any]) -> Optional[tuple[int, int]]:
+        """插入记录并返回 (page_id, record_index)；失败返回 None。"""
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+        if not schema.validate_record(record_data):
+            raise ValueError("记录数据不符合表结构")
+
+        # 简化：主键检查沿用原逻辑
+        if schema.primary_key_columns:
+            existing_records = self.scan_table(table_name)
+            for existing in existing_records:
+                if all(existing.get(pk) == record_data.get(pk) for pk in schema.primary_key_columns):
+                    raise ValueError(f"主键冲突: {schema.primary_key_columns}")
+
+        pages = self.catalog.get_table_pages(table_name)
+        record = Record(record_data)
+        for page_id in pages:
+            idx = self.record_manager.insert_record_with_index(page_id, record)
+            if idx is not None:
+                return (page_id, idx)
+        # 分配新页
+        new_page_id = self.catalog.allocate_page_for_table(table_name)
+        idx = self.record_manager.insert_record_with_index(new_page_id, record)
+        if idx is None:
+            return None
+        return (new_page_id, idx)
+
+    def scan_table_with_locations(self, table_name: str) -> List[tuple[int, int, Record]]:
+        """扫描表，返回 (page_id, record_index, Record)。"""
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+        results: List[tuple[int, int, Record]] = []
+        for page_id in self.catalog.get_table_pages(table_name):
+            rows = self.record_manager.get_records_with_indices(page_id)
+            for idx, rec in rows:
+                results.append((page_id, idx, rec))
+        return results
+
+    def delete_at(self, table_name: str, page_id: int, record_index: int) -> bool:
+        """按位置删除一条记录。"""
+        return self.record_manager.delete_record(page_id, record_index)
+
+    def update_at(self, table_name: str, page_id: int, record_index: int, new_data: Dict[str, Any]) -> bool:
+        """按位置更新一条记录。"""
+        new_record = Record(new_data)
+        return self.record_manager.update_record(page_id, record_index, new_record)

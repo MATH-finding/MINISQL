@@ -98,7 +98,7 @@ class IndexManager:
         return self.table_indexes.get(table_name, [])
 
     def insert_into_indexes(
-        self, table_name: str, record: Dict[str, Any], record_id: int
+        self, table_name: str, record: Dict[str, Any], rid: tuple[int, int]
     ) -> bool:
         """将记录插入到所有相关索引中"""
         if table_name not in self.table_indexes:
@@ -109,7 +109,7 @@ class IndexManager:
             if index_info.column_name in record:
                 btree = self.get_index(index_name)
                 key = record[index_info.column_name]
-                if not btree.insert(key, record_id):
+                if not btree.insert(key, rid):
                     return False
 
         return True

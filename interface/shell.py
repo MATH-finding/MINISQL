@@ -67,6 +67,34 @@ class SQLShell:
         if not command:
             return
 
+        # 会话管理命令（以反斜杠开头）
+        if command.startswith("\\session"):
+            parts = command.split()
+            if len(parts) == 1 or parts[1] == "list":
+                sessions = self.database.list_sessions()
+                print("Sessions:")
+                for s in sessions:
+                    star = "*" if s["current"] else " "
+                    print(f"  {star} [{s['id']}] sid={s['session_id']} autocommit={'1' if s['autocommit'] else '0'} in_txn={'1' if s['in_txn'] else '0'} iso={s['isolation']}")
+                return
+            elif parts[1] == "new":
+                idx = self.database.new_session()
+                print(f"新建会话: {idx}")
+                return
+            elif parts[1] == "use" and len(parts) >= 3:
+                try:
+                    idx = int(parts[2])
+                    if self.database.use_session(idx):
+                        print(f"切换到会话: {idx}")
+                    else:
+                        print("无效的会话编号")
+                except ValueError:
+                    print("请输入有效的会话编号")
+                return
+            else:
+                print("用法: \\session [list|new|use <id>]")
+                return
+
         # 内置命令
         if command.lower() in ("quit", "exit"):
             print("正在保存数据...")
@@ -112,9 +140,18 @@ class SQLShell:
         result = self.database.execute_sql(command)
         format_query_result(result)
 
-        # 对于修改数据的操作，强制保存
-        if command.upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
-            self.database.flush_all()
+        # 对于修改数据的操作，事务中或 autocommit=0 时不强制保存
+        upper = command.upper()
+        if upper.startswith(("CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
+            try:
+                exec_ref = getattr(self.database, "sql_executor", None)
+                in_txn = exec_ref and exec_ref.txn.in_txn()
+                autocommit = exec_ref and exec_ref.txn.autocommit()
+            except Exception:
+                in_txn = False
+                autocommit = True
+            if autocommit and not in_txn:
+                self.database.flush_all()
 
         print()  # 空行
 
@@ -128,6 +165,18 @@ class SQLShell:
   CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
   INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
   SELECT columns FROM table_name [WHERE condition]     - 查询数据
+  UPDATE table_name SET col=val [WHERE ...]            - 更新数据
+  DELETE FROM table_name [WHERE ...]                   - 删除数据
+  BEGIN | START TRANSACTION                            - 开启事务
+  COMMIT                                               - 提交事务
+  ROLLBACK                                             - 回滚事务（当前未实现）
+  SET AUTOCOMMIT = 0|1                                 - 设置自动提交
+  SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
+
+🧭 会话管理:
+  \\session list                                      - 列出会话
+  \\session new                                       - 新建会话
+  \\session use <id>                                  - 切换会话
   
 🔍 索引操作:
   CREATE INDEX index_name ON table_name (column)       - 创建索引

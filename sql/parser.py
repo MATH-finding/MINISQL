@@ -31,6 +31,16 @@ class SQLParser:
             return self._parse_update()
         elif self.current_token.type == TokenType.DELETE:  # 新增
             return self._parse_delete()
+        elif self.current_token.type == TokenType.BEGIN:
+            return self._parse_begin()
+        elif self.current_token.type == TokenType.START:
+            return self._parse_start_transaction()
+        elif self.current_token.type == TokenType.COMMIT:
+            return self._parse_commit()
+        elif self.current_token.type == TokenType.ROLLBACK:
+            return self._parse_rollback()
+        elif self.current_token.type == TokenType.SET:
+            return self._parse_set()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
 
@@ -399,3 +409,62 @@ class SQLParser:
             where_clause = self._parse_where_expression()  # 使用现有的WHERE解析方法
 
         return DeleteStatement(table_name, where_clause)
+
+    def _parse_begin(self) -> Statement:
+        self._expect(TokenType.BEGIN)
+        if self.current_token and self.current_token.type == TokenType.TRANSACTION:
+            self._advance()
+        return BeginTransaction()
+
+    def _parse_start_transaction(self) -> Statement:
+        self._expect(TokenType.START)
+        self._expect(TokenType.TRANSACTION)
+        return BeginTransaction()
+
+    def _parse_commit(self) -> Statement:
+        self._expect(TokenType.COMMIT)
+        return CommitTransaction()
+
+    def _parse_rollback(self) -> Statement:
+        self._expect(TokenType.ROLLBACK)
+        return RollbackTransaction()
+
+    def _parse_set(self) -> Statement:
+        self._expect(TokenType.SET)
+        # 两种形式： SET AUTOCOMMIT=0|1 或 SET SESSION TRANSACTION ISOLATION LEVEL ...
+        if self.current_token.type == TokenType.AUTOCOMMIT:
+            self._advance()
+            self._expect(TokenType.EQUALS)
+            if self.current_token.type == TokenType.NUMBER and self.current_token.value in ("0", "1"):
+                enabled = self.current_token.value == "1"
+                self._advance()
+                return SetAutocommit(enabled)
+            else:
+                raise SyntaxError("AUTOCOMMIT 只能为 0 或 1")
+        elif self.current_token.type == TokenType.SESSION:
+            self._advance()
+            self._expect(TokenType.TRANSACTION)
+            self._expect(TokenType.ISOLATION)
+            self._expect(TokenType.LEVEL)
+            # 解析隔离级别
+            if self.current_token.type == TokenType.READ:
+                self._advance()
+                if self.current_token.type == TokenType.COMMITTED_KW:
+                    self._advance()
+                    return SetIsolationLevel("READ COMMITTED")
+                elif self.current_token.type == TokenType.UNCOMMITTED_KW:
+                    self._advance()
+                    return SetIsolationLevel("READ UNCOMMITTED")
+                elif self.current_token.type == TokenType.REPEATABLE:
+                    self._advance()
+                    self._expect(TokenType.READ)
+                    return SetIsolationLevel("REPEATABLE READ")
+                else:
+                    raise SyntaxError("未知的隔离级别: READ ...")
+            elif self.current_token.type == TokenType.SERIALIZABLE:
+                self._advance()
+                return SetIsolationLevel("SERIALIZABLE")
+            else:
+                raise SyntaxError("未知的隔离级别")
+        else:
+            raise SyntaxError("仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ...")

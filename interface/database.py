@@ -30,31 +30,51 @@ class SimpleDatabase:
         # 初始化表管理层
         self.table_manager = TableManager(self.catalog, self.record_manager)
 
-        # 初始化SQL处理层 - 传入索引管理器
-        self.sql_executor = SQLExecutor(
-            self.table_manager, self.catalog, self.index_manager
-        )
-
-        self.executor = self.sql_executor
+        # 会话管理：多个执行器共享同一存储与目录
+        self._executors = []
+        self._current_session = None
+        self.new_session()  # 默认创建一个会话
 
         print(f"数据库 {db_file} 已连接")
 
+    def new_session(self) -> int:
+        executor = SQLExecutor(self.table_manager, self.catalog, self.index_manager)
+        self._executors.append(executor)
+        self._current_session = len(self._executors) - 1
+        return self._current_session
+
+    def use_session(self, idx: int) -> bool:
+        if 0 <= idx < len(self._executors):
+            self._current_session = idx
+            return True
+        return False
+
+    def list_sessions(self) -> list:
+        result = []
+        for i, ex in enumerate(self._executors):
+            result.append({
+                "id": i,
+                "session_id": getattr(ex, "session_id", i + 1),
+                "autocommit": ex.txn.autocommit(),
+                "in_txn": ex.txn.in_txn(),
+                "isolation": ex.txn.isolation_level(),
+                "current": (i == self._current_session),
+            })
+        return result
+
+    @property
+    def sql_executor(self) -> SQLExecutor:
+        return self._executors[self._current_session]
+
     def execute_sql(self, sql: str) -> Dict[str, Any]:
-        """执行SQL语句"""
+        """执行SQL语句（路由到当前会话）"""
         try:
-            # 词法分析
             lexer = SQLLexer(sql.strip())
             tokens = lexer.tokenize()
-
-            # 语法分析
             parser = SQLParser(tokens)
             ast = parser.parse()
-
-            # 执行SQL
             result = self.sql_executor.execute(ast)
-
             return result
-
         except Exception as e:
             return {
                 "success": False,
