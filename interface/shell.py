@@ -30,13 +30,19 @@ class SQLShell:
                     self._process_command(user_input)
             except KeyboardInterrupt:
                 print("\n正在保存数据...")
-                self.database.flush_all()  # 强制保存
-                print("数据已保存，再见！")
+                try:
+                    self.database.flush_all()
+                    print("💾 数据已保存，再见！")
+                except Exception as e:
+                    print(f"⚠️ 保存数据时出错: {e}")
                 break
             except EOFError:
                 print("\n正在保存数据...")
-                self.database.flush_all()  # 强制保存
-                print("数据已保存，再见！")
+                try:
+                    self.database.flush_all()
+                    print("💾 数据已保存，再见！")
+                except Exception as e:
+                    print(f"⚠️ 保存数据时出错: {e}")
                 break
 
     def _get_input(self) -> Optional[str]:
@@ -70,8 +76,11 @@ class SQLShell:
         # 内置命令
         if command.lower() in ("quit", "exit"):
             print("正在保存数据...")
-            self.database.flush_all()  # 退出前保存
-            print("数据已保存，再见！")
+            try:
+                self.database.flush_all()
+                print("💾 数据已保存，再见！")
+            except Exception as e:
+                print(f"⚠️ 保存数据时出错: {e}")
             self.running = False
             return
 
@@ -89,6 +98,14 @@ class SQLShell:
             table_name = command.split()[1]
             self._describe_table(table_name)
             return
+
+        # 新增：show table_name 命令
+        if command.lower().startswith("show "):
+            parts = command.split()
+            if len(parts) >= 2:
+                table_name = parts[1]
+                self._show_table_data(table_name)
+                return
 
         if command.lower().startswith("indexes"):
             parts = command.split()
@@ -112,11 +129,30 @@ class SQLShell:
         result = self.database.execute_sql(command)
         format_query_result(result)
 
-        # 对于修改数据的操作，强制保存
-        if command.upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
-            self.database.flush_all()
+        # 对于所有可能修改数据的操作，都强制保存
+        if any(
+            command.upper().startswith(cmd)
+            for cmd in ["CREATE", "INSERT", "UPDATE", "DELETE", "DROP"]
+        ):
+            try:
+                self.database.flush_all()
+                print("💾 数据已保存")
+            except Exception as e:
+                print(f"⚠️ 保存数据时出错: {e}")
 
         print()  # 空行
+
+    def _show_table_data(self, table_name: str):
+        """显示表的所有数据"""
+        try:
+            result = self.database.execute_sql(f"SELECT * FROM {table_name}")
+            if result.get("success"):
+                print(f"表 '{table_name}' 的数据:")
+                format_query_result(result)
+            else:
+                print(f"❌ 错误: {result.get('message', '未知错误')}")
+        except Exception as e:
+            print(f"❌ 查询表数据时出错: {e}")
 
     def _show_help(self):
         """显示帮助信息"""
@@ -128,6 +164,8 @@ class SQLShell:
   CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
   INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
   SELECT columns FROM table_name [WHERE condition]     - 查询数据
+  UPDATE table_name SET col=value [WHERE condition]    - 更新数据
+  DELETE FROM table_name [WHERE condition]             - 删除数据
   
 🔍 索引操作:
   CREATE INDEX index_name ON table_name (column)       - 创建索引
@@ -137,6 +175,7 @@ class SQLShell:
 📊 系统命令:
   tables                     - 列出所有表
   describe <table>           - 查看表结构 (可简写为 desc)
+  show <table>               - 查看表数据内容 (等同于 SELECT * FROM table)
   indexes [table_name]       - 查看索引信息
   stats                      - 显示数据库统计信息
   help, ?                    - 显示此帮助
@@ -156,10 +195,11 @@ class SQLShell:
 
 💡 示例:
   CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50));
+  INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+  show users                    -- 查看表数据
+  UPDATE users SET name = 'NewName' WHERE id = 1;
+  DELETE FROM users WHERE id = 2;
   CREATE INDEX idx_user_id ON users (id);
-  INSERT INTO users VALUES (1, 'Alice');
-  SELECT * FROM users WHERE id = 1;
-  DROP INDEX idx_user_id;
         """
         )
 
