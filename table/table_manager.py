@@ -85,3 +85,54 @@ class TableManager:
                         deleted_count += 1
 
         return deleted_count
+
+    def update_records(
+        self, table_name: str, updates: Dict[str, Any], condition_func=None
+    ) -> int:
+        """更新表中的记录
+
+        Args:
+            table_name: 表名
+            updates: 要更新的字段和值 {'column_name': new_value}
+            condition_func: 过滤条件函数，接受记录数据返回bool
+
+        Returns:
+            更新的记录数量
+        """
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+
+        # 验证更新的列是否存在
+        for column_name in updates.keys():
+            if not any(col.name == column_name for col in schema.columns):
+                raise ValueError(f"列 {column_name} 不存在于表 {table_name}")
+
+        updated_count = 0
+        table_pages = self.catalog.get_table_pages(table_name)
+
+        # 遍历每个页面
+        for page_id in table_pages:
+            records = self.record_manager.get_records(page_id)
+
+            # 检查每条记录
+            for record_index, record in enumerate(records):
+                if condition_func is None or condition_func(record.data):
+                    # 创建更新后的记录数据
+                    new_data = record.data.copy()
+                    new_data.update(updates)
+
+                    # 创建新记录
+                    new_record = Record(new_data)
+
+                    # 使用RecordManager的update_record方法更新
+                    if self.record_manager.update_record(
+                        page_id, record_index, new_record
+                    ):
+                        updated_count += 1
+                    else:
+                        print(
+                            f"更新记录失败: page_id={page_id}, record_index={record_index}"
+                        )
+
+        return updated_count

@@ -42,6 +42,10 @@ class SQLExecutor:
             return self._execute_create_index(ast)
         elif isinstance(ast, DropIndexStatement):
             return self._execute_drop_index(ast)
+        elif isinstance(ast, UpdateStatement):  # 新增
+            return self._execute_update(ast)
+        elif isinstance(ast, DeleteStatement):  # 新增
+            return self._execute_delete(ast)
         else:
             raise ValueError(f"不支持的语句类型: {type(ast)}")
 
@@ -403,3 +407,66 @@ class SQLExecutor:
 
         else:
             raise ValueError(f"不支持的条件类型: {type(condition)}")
+
+    def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
+        """执行UPDATE语句"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 构建更新数据
+        updates = {}
+        for set_clause in stmt.set_clauses:
+            column_name = set_clause["column"]
+            value_expr = set_clause["value"]
+            # 计算表达式值（对于简单字面量）
+            if isinstance(value_expr, Literal):
+                updates[column_name] = value_expr.value
+            else:
+                raise ValueError(f"UPDATE暂时只支持字面量值")
+
+        # 构建条件函数
+        condition_func = None
+        if stmt.where_clause:
+            condition_func = lambda record_data: self._evaluate_condition(
+                stmt.where_clause, record_data
+            )
+
+        # 执行更新
+        updated_count = self.table_manager.update_records(
+            stmt.table_name, updates, condition_func
+        )
+
+        return {
+            "type": "UPDATE",
+            "table_name": stmt.table_name,
+            "rows_updated": updated_count,
+            "success": True,
+            "message": f"成功更新 {updated_count} 行",
+        }
+
+    def _execute_delete(self, stmt: DeleteStatement) -> Dict[str, Any]:
+        """执行DELETE语句"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 构建条件函数
+        condition_func = None
+        if stmt.where_clause:
+            condition_func = lambda record_data: self._evaluate_condition(
+                stmt.where_clause, record_data
+            )
+
+        # 执行删除
+        deleted_count = self.table_manager.delete_records(
+            stmt.table_name, condition_func
+        )
+
+        return {
+            "type": "DELETE",
+            "table_name": stmt.table_name,
+            "rows_deleted": deleted_count,
+            "success": True,
+            "message": f"成功删除 {deleted_count} 行",
+        }

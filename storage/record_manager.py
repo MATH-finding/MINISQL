@@ -218,3 +218,78 @@ class RecordManager:
             print(f"页面初始化检查失败，强制初始化: {e}")
             page.write_int(0, 0)
             page.write_int(4, self.DATA_START)
+
+    def update_record(
+        self, page_id: int, record_index: int, new_record: Record
+    ) -> bool:
+        """更新页面中的指定记录"""
+        page = self.buffer_manager.get_page(page_id)
+
+        try:
+            # 检查并初始化页面（如果需要）
+            self._ensure_page_initialized(page)
+
+            record_count = page.read_int(0)
+
+            if record_index >= record_count or record_index < 0:
+                return False
+
+            # 获取原记录的偏移位置
+            offset_pos = self.OFFSET_TABLE_START + record_index * 4
+            old_record_offset = page.read_int(offset_pos)
+
+            # 如果记录已被删除，返回False
+            if old_record_offset == -1:
+                return False
+
+            # 序列化新记录
+            new_record_data = pickle.dumps(
+                new_record.data, protocol=pickle.HIGHEST_PROTOCOL
+            )
+            new_record_size = len(new_record_data)
+
+            # 读取原记录大小
+            old_record_size = page.read_int(old_record_offset)
+
+            # 如果新记录大小 <= 原记录大小，可以就地更新
+            if new_record_size <= old_record_size:
+                # 就地更新
+                page.write_int(old_record_offset, new_record_size)
+                page.write_bytes(old_record_offset + 4, new_record_data)
+
+                # 如果有剩余空间，可以选择清零（可选）
+                if new_record_size < old_record_size:
+                    remaining = old_record_size - new_record_size
+                    zero_padding = b"\x00" * remaining
+                    page.write_bytes(
+                        old_record_offset + 4 + new_record_size, zero_padding
+                    )
+
+                return True
+            else:
+                # 新记录更大，需要在页面末尾分配新空间
+                free_space_offset = page.read_int(4)
+
+                # 检查空间是否够用
+                if free_space_offset + 4 + new_record_size > page.PAGE_SIZE:
+                    return False
+
+                # 在新位置写入记录
+                page.write_int(free_space_offset, new_record_size)
+                page.write_bytes(free_space_offset + 4, new_record_data)
+
+                # 更新偏移表，指向新位置
+                page.write_int(offset_pos, free_space_offset)
+
+                # 更新自由空间偏移
+                page.write_int(4, free_space_offset + 4 + new_record_size)
+
+                # 原位置可以标记为已删除或者保持不变（会有碎片，但简单实现可以忽略）
+
+                return True
+
+        except Exception as e:
+            print(f"更新记录时出错: {e}")
+            return False
+        finally:
+            self.buffer_manager.unpin_page(page_id, True)
