@@ -81,7 +81,9 @@ class SQLShell:
                 print("Sessions:")
                 for s in sessions:
                     star = "*" if s["current"] else " "
-                    print(f"  {star} [{s['id']}] sid={s['session_id']} autocommit={'1' if s['autocommit'] else '0'} in_txn={'1' if s['in_txn'] else '0'} iso={s['isolation']}")
+                    print(
+                        f"  {star} [{s['id']}] sid={s['session_id']} autocommit={'1' if s['autocommit'] else '0'} in_txn={'1' if s['in_txn'] else '0'} iso={s['isolation']}"
+                    )
                 return
             elif parts[1] == "new":
                 idx = self.database.new_session()
@@ -302,6 +304,14 @@ class SQLShell:
   VARCHAR(n)       字符串，最大长度n
   FLOAT            浮点数
   BOOLEAN          布尔值 (TRUE/FALSE)
+  CHAR = "CHAR"         固定长度字符串
+  DECIMAL = "DECIMAL"   精确小数
+  DATE = "DATE"         日期类型
+  TIME = "TIME"         时间类型
+  DATETIME = "DATETIME" 日期时间类型
+  BIGINT = "BIGINT"     64位整数
+  TINYINT = "TINYINT"   8位整数
+  TEXT = "TEXT"         长文本  
 
 🔒 约束:
   PRIMARY KEY      主键
