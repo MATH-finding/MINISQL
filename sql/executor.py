@@ -110,7 +110,9 @@ class TransactionManager:
     def isolation_level(self) -> str:
         return self._isolation_level
 
-    def get_rr_snapshot_for_table(self, table_name: str) -> Optional[List[Dict[str, Any]]]:
+    def get_rr_snapshot_for_table(
+        self, table_name: str
+    ) -> Optional[List[Dict[str, Any]]]:
         return self._rr_snapshot.get(table_name)
 
     def set_rr_snapshot_for_table(self, table_name: str, rows: List[Dict[str, Any]]):
@@ -178,7 +180,11 @@ class SQLExecutor:
             result = self._execute_delete_with_undo(ast)
         elif isinstance(ast, BeginTransaction):
             txn_id = self.txn.begin()
-            return {"type": "BEGIN", "success": True, "message": f"事务已开始 (id={txn_id})"}
+            return {
+                "type": "BEGIN",
+                "success": True,
+                "message": f"事务已开始 (id={txn_id})",
+            }
         elif isinstance(ast, CommitTransaction):
             # 立即写入方案下，COMMIT 只需结束事务与释放资源
             active_id = self.txn.current_txn_id()
@@ -190,7 +196,11 @@ class SQLExecutor:
         elif isinstance(ast, RollbackTransaction):
             # 无活动事务时报错
             if not self.txn.in_txn():
-                return {"type": "ROLLBACK", "success": False, "message": "当前不在事务中，无法回滚"}
+                return {
+                    "type": "ROLLBACK",
+                    "success": False,
+                    "message": "当前不在事务中，无法回滚",
+                }
             self._rollback_playback()
             self._undo_log.pop(self.txn.current_txn_id(), None)
             TableLockManager.release_all_for_session(self.session_id)
@@ -205,16 +215,32 @@ class SQLExecutor:
             self.txn.set_autocommit(ast.enabled)
             if ast.enabled:
                 TableLockManager.release_all_for_session(self.session_id)
-            return {"type": "SET", "success": True, "message": f"AUTOCOMMIT={(1 if ast.enabled else 0)}"}
+            return {
+                "type": "SET",
+                "success": True,
+                "message": f"AUTOCOMMIT={(1 if ast.enabled else 0)}",
+            }
         elif isinstance(ast, SetIsolationLevel):
             self.txn.set_isolation_level(ast.level)
             TableLockManager.release_all_for_session(self.session_id)
-            return {"type": "SET", "success": True, "message": f"ISOLATION LEVEL {ast.level}"}
+            return {
+                "type": "SET",
+                "success": True,
+                "message": f"ISOLATION LEVEL {ast.level}",
+            }
         else:
             raise ValueError(f"不支持的语句类型: {type(ast)}")
 
         if self.txn.autocommit() and isinstance(
-            ast, (InsertStatement, UpdateStatement, DeleteStatement, CreateTableStatement, DropIndexStatement, CreateIndexStatement)
+            ast,
+            (
+                InsertStatement,
+                UpdateStatement,
+                DeleteStatement,
+                CreateTableStatement,
+                DropIndexStatement,
+                CreateIndexStatement,
+            ),
         ):
             self._maybe_release_autocommit_locks()
 
@@ -246,23 +272,29 @@ class SQLExecutor:
                     record_data[column.name] = value
 
             # 实际插入
-            loc = self.table_manager.insert_record_with_location(stmt.table_name, record_data)
+            loc = self.table_manager.insert_record_with_location(
+                stmt.table_name, record_data
+            )
             if not loc:
                 raise ValueError("插入记录失败")
             page_id, ridx = loc
 
             # 索引维护
             if self.index_manager:
-                self.index_manager.insert_into_indexes(stmt.table_name, record_data, (page_id, ridx))
+                self.index_manager.insert_into_indexes(
+                    stmt.table_name, record_data, (page_id, ridx)
+                )
 
             # 若在事务中，记录补偿删除的 Undo
             if self.txn.in_txn():
-                self._push_undo({
-                    "type": "INSERT",
-                    "table": stmt.table_name,
-                    "page_id": page_id,
-                    "index": ridx,
-                })
+                self._push_undo(
+                    {
+                        "type": "INSERT",
+                        "table": stmt.table_name,
+                        "page_id": page_id,
+                        "index": ridx,
+                    }
+                )
 
             inserted_count += 1
 
@@ -293,7 +325,9 @@ class SQLExecutor:
             page_id, ridx = loc
             # 索引维护：写入RID
             if self.index_manager:
-                self.index_manager.insert_into_indexes(table_name, data, (page_id, ridx))
+                self.index_manager.insert_into_indexes(
+                    table_name, data, (page_id, ridx)
+                )
             applied += 1
         # 清理
         self._pending_inserts.pop(txn_id, None)
@@ -463,9 +497,10 @@ class SQLExecutor:
             "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
         }
 
-   # 合并后的 _execute_select 函数
+    # 合并后的 _execute_select 函数
     def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
         """执行SELECT - 扩展支持JOIN和聚合函数"""
+
         # 递归获取结果集
         def eval_from(from_table):
             if isinstance(from_table, str):
@@ -499,7 +534,9 @@ class SQLExecutor:
         # WHERE过滤
         filtered_records = []
         for record in all_records:
-            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, record.data):
+            if stmt.where_clause is None or self._evaluate_condition(
+                stmt.where_clause, record.data
+            ):
                 filtered_records.append(record)
 
         # 检查是否有聚合函数
@@ -514,30 +551,51 @@ class SQLExecutor:
                             agg_result["COUNT"] = len(filtered_records)
                         elif isinstance(arg, ColumnRef):
                             # 只统计非NULL
-                            agg_result["COUNT"] = sum(1 for r in filtered_records if self._evaluate_expression(arg, r.data) is not None)
+                            agg_result["COUNT"] = sum(
+                                1
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            )
                         else:
                             raise ValueError("COUNT参数不支持")
                     elif func == "SUM":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records]
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                            ]
                             agg_result["SUM"] = sum(v for v in values if v is not None)
                         else:
                             raise ValueError("SUM参数不支持")
                     elif func == "AVG":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
-                            agg_result["AVG"] = sum(values) / len(values) if values else None
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            ]
+                            agg_result["AVG"] = (
+                                sum(values) / len(values) if values else None
+                            )
                         else:
                             raise ValueError("AVG参数不支持")
                     elif func == "MIN":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            ]
                             agg_result["MIN"] = min(values) if values else None
                         else:
                             raise ValueError("MIN参数不支持")
                     elif func == "MAX":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            ]
                             agg_result["MAX"] = max(values) if values else None
                         else:
                             raise ValueError("MAX参数不支持")
@@ -561,13 +619,20 @@ class SQLExecutor:
                                 else:
                                     raise ValueError(f"列 {key} 不存在")
                             else:
-                                matches = [k for k in record.data if k.endswith(f".{col.column_name}") or k == col.column_name]
+                                matches = [
+                                    k
+                                    for k in record.data
+                                    if k.endswith(f".{col.column_name}")
+                                    or k == col.column_name
+                                ]
                                 if len(matches) == 1:
                                     key = matches[0]
                                 elif len(matches) == 0:
                                     raise ValueError(f"列 {col.column_name} 不存在")
                                 else:
-                                    raise ValueError(f"列 {col.column_name} 不明确，请加表前缀")
+                                    raise ValueError(
+                                        f"列 {col.column_name} 不明确，请加表前缀"
+                                    )
                                 if key in record.data:
                                     selected_data[col.column_name] = record.data[key]
                                 else:
@@ -789,13 +854,13 @@ class SQLExecutor:
 
         return None
 
-    def _get_records_by_ids(
-        self, table_name: str, rids: List[tuple]
-    ) -> List[Record]:
+    def _get_records_by_ids(self, table_name: str, rids: List[tuple]) -> List[Record]:
         """根据RID获取记录（当前用scan匹配page_id/index，教学简化）"""
         rid_set = set(rids)
         results: List[Record] = []
-        for page_id, idx, rec in self.table_manager.scan_table_with_locations(table_name):
+        for page_id, idx, rec in self.table_manager.scan_table_with_locations(
+            table_name
+        ):
             if (page_id, idx) in rid_set:
                 results.append(rec)
         return results
@@ -862,22 +927,47 @@ class SQLExecutor:
 
         # 遍历并按位置更新 + 写入undo
         updated = 0
-        for page_id, idx, rec in self.table_manager.scan_table_with_locations(stmt.table_name):
-            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
+        for page_id, idx, rec in self.table_manager.scan_table_with_locations(
+            stmt.table_name
+        ):
+            if stmt.where_clause is None or self._evaluate_condition(
+                stmt.where_clause, rec.data
+            ):
                 old_data = dict(rec.data)
                 new_data = dict(old_data)
                 new_data.update(updates)
-                if self.table_manager.update_at(stmt.table_name, page_id, idx, new_data):
+
+                # 检查索引唯一性约束
+                if self.index_manager:
+                    try:
+                        self.index_manager.update_index_for_record(
+                            stmt.table_name, old_data, new_data, (page_id, idx)
+                        )
+                    except ValueError as e:
+                        raise ValueError(f"更新失败：{str(e)}")
+
+                if self.table_manager.update_at(
+                    stmt.table_name, page_id, idx, new_data
+                ):
                     updated += 1
                     # 写入undo
-                    self._push_undo({
-                        "type": "UPDATE",
-                        "table": stmt.table_name,
-                        "page_id": page_id,
-                        "index": idx,
-                        "old_data": old_data,
-                    })
-        return {"type": "UPDATE", "table_name": stmt.table_name, "rows_updated": updated, "success": True, "message": f"成功更新 {updated} 行"}
+                    self._push_undo(
+                        {
+                            "type": "UPDATE",
+                            "table": stmt.table_name,
+                            "page_id": page_id,
+                            "index": idx,
+                            "old_data": old_data,
+                        }
+                    )
+
+        return {
+            "type": "UPDATE",
+            "table_name": stmt.table_name,
+            "rows_updated": updated,
+            "success": True,
+            "message": f"成功更新 {updated} 行",
+        }
 
     def _execute_delete_with_undo(self, stmt: DeleteStatement) -> Dict[str, Any]:
         # SERIALIZABLE: 写锁
@@ -888,16 +978,28 @@ class SQLExecutor:
             raise ValueError(f"表 {stmt.table_name} 不存在")
 
         deleted = 0
-        for page_id, idx, rec in self.table_manager.scan_table_with_locations(stmt.table_name):
-            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
+        for page_id, idx, rec in self.table_manager.scan_table_with_locations(
+            stmt.table_name
+        ):
+            if stmt.where_clause is None or self._evaluate_condition(
+                stmt.where_clause, rec.data
+            ):
                 old_data = dict(rec.data)
                 if self.table_manager.delete_at(stmt.table_name, page_id, idx):
                     deleted += 1
-                    self._push_undo({
-                        "type": "DELETE",
-                        "table": stmt.table_name,
-                        "page_id": page_id,
-                        "index": idx,
-                        "old_data": old_data,
-                    })
-        return {"type": "DELETE", "table_name": stmt.table_name, "rows_deleted": deleted, "success": True, "message": f"成功删除 {deleted} 行"}
+                    self._push_undo(
+                        {
+                            "type": "DELETE",
+                            "table": stmt.table_name,
+                            "page_id": page_id,
+                            "index": idx,
+                            "old_data": old_data,
+                        }
+                    )
+        return {
+            "type": "DELETE",
+            "table_name": stmt.table_name,
+            "rows_deleted": deleted,
+            "success": True,
+            "message": f"成功删除 {deleted} 行",
+        }

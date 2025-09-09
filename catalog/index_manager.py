@@ -90,7 +90,10 @@ class IndexManager:
 
         index_info = self.indexes[index_name]
         return BPlusTree(
-            self.buffer_manager, self.page_manager, root_page_id=index_info.root_page_id
+            self.buffer_manager,
+            self.page_manager,
+            root_page_id=index_info.root_page_id,
+            is_unique=index_info.is_unique,  # 传递唯一性标记
         )
 
     def get_table_indexes(self, table_name: str) -> List[str]:
@@ -100,7 +103,7 @@ class IndexManager:
     def insert_into_indexes(
         self, table_name: str, record: Dict[str, Any], rid: tuple[int, int]
     ) -> bool:
-        """将记录插入到所有相关索引中"""
+        """将记录插入到所有相关索引中，支持唯一性检查"""
         if table_name not in self.table_indexes:
             return True
 
@@ -109,8 +112,56 @@ class IndexManager:
             if index_info.column_name in record:
                 btree = self.get_index(index_name)
                 key = record[index_info.column_name]
-                if not btree.insert(key, rid):
-                    return False
+                try:
+                    if not btree.insert(key, rid):
+                        return False
+                except ValueError as e:
+                    # 唯一性约束违反
+                    raise e
+
+        return True
+
+    def update_index_for_record(
+        self,
+        table_name: str,
+        old_record: Dict[str, Any],
+        new_record: Dict[str, Any],
+        rid: tuple[int, int],
+    ) -> bool:
+        """更新记录时维护索引，支持唯一性检查"""
+        if table_name not in self.table_indexes:
+            return True
+
+        for index_name in self.table_indexes[table_name]:
+            index_info = self.indexes[index_name]
+            column_name = index_info.column_name
+
+            if column_name in old_record or column_name in new_record:
+                btree = self.get_index(index_name)
+
+                # 如果键值发生变化
+                old_key = old_record.get(column_name)
+                new_key = new_record.get(column_name)
+
+                if old_key != new_key:
+                    # 如果是唯一索引，先检查新键是否已存在
+                    if index_info.is_unique and new_key is not None:
+                        existing_value = btree.search(new_key)
+                        if existing_value is not None:
+                            raise ValueError(
+                                f"唯一性约束违反：键 {new_key} 已存在于索引 {index_name}"
+                            )
+
+                    # 删除旧键（TODO: 需要实现delete方法）
+                    # btree.delete(old_key, rid)
+
+                    # 插入新键
+                    if new_key is not None:
+                        try:
+                            if not btree.insert(new_key, rid):
+                                return False
+                        except ValueError as e:
+                            raise e
 
         return True
 
