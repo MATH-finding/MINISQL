@@ -50,10 +50,20 @@ class BPlusTree:
         self.page_manager = page_manager
         self.order = order  # B+树的阶数
         self.root_page_id = root_page_id
+        self.root = None  # 添加root属性
 
         if root_page_id is None:
             # 创建新的根节点
             self._create_root()
+        else:
+            # 如果有现有的根页面ID，加载根节点
+            self.root = self._load_node_from_page(root_page_id)
+
+    def is_empty(self):
+        """检查B+树是否为空"""
+        return self.root is None or (
+            hasattr(self.root, "keys") and len(self.root.keys) == 0
+        )
 
     def _create_root(self) -> None:
         """创建根节点"""
@@ -62,6 +72,7 @@ class BPlusTree:
 
         # 初始化为叶子节点
         leaf = LeafNode(self.root_page_id)
+        self.root = leaf  # 设置root属性
         self._save_node_to_page(leaf)
 
     def insert(self, key: Any, value: Any) -> bool:
@@ -175,7 +186,7 @@ class BPlusTree:
         new_leaf.keys = leaf.keys[mid_index:]
         new_leaf.values = leaf.values[mid_index:]
         new_leaf.next_leaf_id = leaf.next_leaf_id
-        new_leaf.parent_id = leaf.parent_id  # 添加这行：设置父节点
+        new_leaf.parent_id = leaf.parent_id
 
         leaf.keys = leaf.keys[:mid_index]
         leaf.values = leaf.values[:mid_index]
@@ -219,11 +230,73 @@ class BPlusTree:
         self._save_node_to_page(left_node)
         self._save_node_to_page(right_node)
 
-        # 关键：更新根节点ID
+        # 关键：更新根节点ID和root属性
         old_root_id = self.root_page_id
         self.root_page_id = new_root.page_id
+        self.root = new_root
 
         return True
+
+    def _insert_into_internal(
+        self, internal_node: InternalNode, key: Any, child_page_id: int
+    ) -> bool:
+        """向内部节点插入键和子节点ID"""
+        # 找到插入位置
+        insert_pos = 0
+        for i, node_key in enumerate(internal_node.keys):
+            if key < node_key:
+                insert_pos = i
+                break
+            else:
+                insert_pos = i + 1
+
+        # 插入键和子节点ID
+        internal_node.keys.insert(insert_pos, key)
+        internal_node.children_ids.insert(insert_pos + 1, child_page_id)
+
+        # 检查是否需要分裂
+        if len(internal_node.keys) <= self.order - 1:
+            self._save_node_to_page(internal_node)
+            return True
+        else:
+            # 需要分裂内部节点
+            return self._handle_internal_split(internal_node)
+
+    def _handle_internal_split(self, internal_node: InternalNode) -> bool:
+        """处理内部节点分裂"""
+        # 创建新的内部节点
+        new_internal_page = self.page_manager.allocate_page()
+        new_internal = InternalNode(new_internal_page.page_id)
+        new_internal.parent_id = internal_node.parent_id
+
+        # 找到分割点
+        mid_index = len(internal_node.keys) // 2
+        promote_key = internal_node.keys[mid_index]
+
+        # 分割键和子节点
+        new_internal.keys = internal_node.keys[mid_index + 1 :]
+        new_internal.children_ids = internal_node.children_ids[mid_index + 1 :]
+
+        internal_node.keys = internal_node.keys[:mid_index]
+        internal_node.children_ids = internal_node.children_ids[: mid_index + 1]
+
+        # 更新所有受影响的子节点的父指针
+        for child_id in internal_node.children_ids:
+            child_node = self._load_node_from_page(child_id)
+            child_node.parent_id = internal_node.page_id
+            self._save_node_to_page(child_node)
+
+        for child_id in new_internal.children_ids:
+            child_node = self._load_node_from_page(child_id)
+            child_node.parent_id = new_internal.page_id
+            self._save_node_to_page(child_node)
+
+        # 保存节点
+        self._save_node_to_page(internal_node)
+        self._save_node_to_page(new_internal)
+
+        # 向父节点插入提升的键
+        return self._insert_into_parent(internal_node, promote_key, new_internal)
 
     def _load_node_from_page(self, page_id: int) -> BPlusTreeNode:
         """从页面加载节点"""
@@ -287,7 +360,7 @@ class BPlusTree:
         try:
             # 写入节点头部
             page.write_int(0, 1 if node.is_leaf else 0)
-            # 修复：使用有符号整数格式处理parent_id
+            # 处理parent_id
             if node.parent_id == -1:
                 page.write_int(4, 0)  # 用0表示无父节点
             else:
@@ -352,66 +425,3 @@ class BPlusTree:
         import pickle
 
         return pickle.loads(data)
-
-    # 在 storage/btree.py 的 BPlusTree 类中添加这个方法
-
-    def _insert_into_internal(
-        self, internal_node: InternalNode, key: Any, child_page_id: int
-    ) -> bool:
-        """向内部节点插入键和子节点ID"""
-        # 找到插入位置
-        insert_pos = 0
-        for i, node_key in enumerate(internal_node.keys):
-            if key < node_key:
-                insert_pos = i
-                break
-            else:
-                insert_pos = i + 1
-
-        # 插入键和子节点ID
-        internal_node.keys.insert(insert_pos, key)
-        internal_node.children_ids.insert(insert_pos + 1, child_page_id)
-
-        # 检查是否需要分裂
-        if len(internal_node.keys) <= self.order - 1:
-            self._save_node_to_page(internal_node)
-            return True
-        else:
-            # 需要分裂内部节点
-            return self._handle_internal_split(internal_node)
-
-    def _handle_internal_split(self, internal_node: InternalNode) -> bool:
-        """处理内部节点分裂"""
-        # 创建新的内部节点
-        new_internal_page = self.page_manager.allocate_page()
-        new_internal = InternalNode(new_internal_page.page_id)
-        new_internal.parent_id = internal_node.parent_id  # 添加这行
-
-        # 找到分割点
-        mid_index = len(internal_node.keys) // 2
-        promote_key = internal_node.keys[mid_index]
-
-        # 分割键和子节点
-        new_internal.keys = internal_node.keys[mid_index + 1 :]
-        new_internal.children_ids = internal_node.children_ids[mid_index + 1 :]
-
-        internal_node.keys = internal_node.keys[:mid_index]
-        internal_node.children_ids = internal_node.children_ids[: mid_index + 1]
-
-        # 修复：更新所有受影响的子节点的父指针
-        for child_id in internal_node.children_ids:
-            child_node = self._load_node_from_page(child_id)
-            child_node.parent_id = internal_node.page_id
-            self._save_node_to_page(child_node)
-
-        for child_id in new_internal.children_ids:
-            child_node = self._load_node_from_page(child_id)
-            child_node.parent_id = new_internal.page_id
-            self._save_node_to_page(child_node)
-
-        # 保存节点
-        self._save_node_to_page(internal_node)
-        self._save_node_to_page(new_internal)
-
-        # 向父节点插入提升的键
-        return self._insert_into_parent(internal_node, promote_key, new_internal)
