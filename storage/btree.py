@@ -45,18 +45,18 @@ class BPlusTree:
         page_manager: PageManager,
         order: int = 50,
         root_page_id: Optional[int] = None,
+        is_unique: bool = False,  # 添加这个参数
     ):
         self.buffer_manager = buffer_manager
         self.page_manager = page_manager
-        self.order = order  # B+树的阶数
+        self.order = order
         self.root_page_id = root_page_id
-        self.root = None  # 添加root属性
+        self.root = None
+        self.is_unique = is_unique  # 添加这个属性
 
         if root_page_id is None:
-            # 创建新的根节点
             self._create_root()
         else:
-            # 如果有现有的根页面ID，加载根节点
             self.root = self._load_node_from_page(root_page_id)
 
     def is_empty(self):
@@ -76,19 +76,23 @@ class BPlusTree:
         self._save_node_to_page(leaf)
 
     def insert(self, key: Any, value: Any) -> bool:
-        """插入键值对"""
+        """插入键值对，支持唯一性检查"""
         if self.root_page_id is None:
             self._create_root()
+
+        # 如果是唯一索引，先检查键是否已存在
+        if self.is_unique:
+            existing_value = self.search(key)
+            if existing_value is not None:
+                raise ValueError(f"唯一性约束违反：键 {key} 已存在")
 
         # 查找插入位置
         leaf = self._find_leaf(key)
 
         # 在叶子节点中插入
         if self._insert_into_leaf(leaf, key, value):
-            # 如果叶子节点没有分裂，插入成功
             return True
         else:
-            # 需要处理节点分裂
             return self._handle_leaf_split(leaf, key, value)
 
     def search(self, key: Any) -> Optional[Any]:
@@ -152,10 +156,14 @@ class BPlusTree:
         insert_pos = 0
         for i, k in enumerate(leaf.keys):
             if key == k:
-                # 更新现有键的值
-                leaf.values[i] = value
-                self._save_node_to_page(leaf)
-                return True
+                if self.is_unique:
+                    # 唯一索引不允许重复键
+                    raise ValueError(f"唯一性约束违反：键 {key} 已存在")
+                else:
+                    # 非唯一索引更新现有键的值
+                    leaf.values[i] = value
+                    self._save_node_to_page(leaf)
+                    return True
             elif key < k:
                 insert_pos = i
                 break

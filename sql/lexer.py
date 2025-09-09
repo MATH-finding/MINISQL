@@ -57,6 +57,21 @@ class TokenType(Enum):
     CHECK = "CHECK"
     FOREIGN = "FOREIGN"
     REFERENCES = "REFERENCES"
+    BEGIN = "BEGIN"
+    START = "START"
+    TRANSACTION = "TRANSACTION"
+    COMMIT = "COMMIT"
+    ROLLBACK = "ROLLBACK"
+    AUTOCOMMIT = "AUTOCOMMIT"
+    SESSION = "SESSION"
+    ISOLATION = "ISOLATION"
+    LEVEL = "LEVEL"
+    READ = "READ"
+    COMMITTED_KW = "COMMITTED_KW"
+    UNCOMMITTED_KW = "UNCOMMITTED_KW"
+    REPEATABLE = "REPEATABLE"
+    SERIALIZABLE = "SERIALIZABLE"
+    TRUNCATE = "TRUNCATE"
 
     # 布尔值
     TRUE = "TRUE"
@@ -123,8 +138,8 @@ class SQLLexer:
         "NULL": TokenType.NULL,
         "AND": TokenType.AND,
         "OR": TokenType.OR,
-        "TRUE": TokenType.TRUE,  # 添加布尔值
-        "FALSE": TokenType.FALSE,  # 添加布尔值
+        "TRUE": TokenType.TRUE,
+        "FALSE": TokenType.FALSE,
         "UNIQUE": TokenType.UNIQUE,
         "INDEX": TokenType.INDEX,
         "ON": TokenType.ON,
@@ -145,6 +160,21 @@ class SQLLexer:
         "CHECK": TokenType.CHECK,
         "FOREIGN": TokenType.FOREIGN,
         "REFERENCES": TokenType.REFERENCES,
+        "BEGIN": TokenType.BEGIN,
+        "START": TokenType.START,
+        "TRANSACTION": TokenType.TRANSACTION,
+        "COMMIT": TokenType.COMMIT,
+        "ROLLBACK": TokenType.ROLLBACK,
+        "AUTOCOMMIT": TokenType.AUTOCOMMIT,
+        "SESSION": TokenType.SESSION,
+        "ISOLATION": TokenType.ISOLATION,
+        "LEVEL": TokenType.LEVEL,
+        "READ": TokenType.READ,
+        "COMMITTED": TokenType.COMMITTED_KW,
+        "UNCOMMITTED": TokenType.UNCOMMITTED_KW,
+        "REPEATABLE": TokenType.REPEATABLE,
+        "SERIALIZABLE": TokenType.SERIALIZABLE,
+        "TRUNCATE": TokenType.TRUNCATE,
     }
 
     def __init__(self, sql: str):

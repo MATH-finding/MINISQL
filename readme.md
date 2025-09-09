@@ -2,7 +2,7 @@
 
 ## 新特性 - B+树索引
 
-拓展：1. 查询优化器2. 并发控制3. 高级索引4. 数据压缩5. 分区表
+拓展：1. 查询优化器 2. 并发控制 3. 高级索引 4. 数据压缩 5. 分区表 6.可视化
 
 ### 索引操作
 - `CREATE INDEX index_name ON table_name (column_name)` - 创建普通索引
@@ -33,13 +33,17 @@ SELECT * FROM users WHERE email = 'user@example.com';
 
 缓存管理: LRU缓存策略，提高I/O性能
 
-数据类型: INTEGER, VARCHAR, FLOAT, BOOLEAN
+数据类型: INTEGER, VARCHAR, FLOAT, BOOLEAN, CHAR
+        DECIMAL, DATE, TIME, DATETIME, BIGINT
+        TINYINT, TEXT
 
 SQL支持: CREATE TABLE, INSERT, SELECT
 
 约束支持: PRIMARY KEY, NOT NULL
 
 条件查询: WHERE子句，支持AND/OR逻辑运算
+
+事务管理: 事务回滚
 
 系统目录: 元数据管理，持久化表结构
 
@@ -114,6 +118,10 @@ simple_database/
     ├── database.py          # 数据库主接口
     ├── shell.py             # 交互式Shell
     └── formatter.py         # 结果格式化
+└── logging/                  
+    ├── __init__.py
+    ├── logger.py            # 核心日志器
+    └── log_manager.py       # 日志管理器
 
 🔧 技术细节
 存储引擎
@@ -151,4 +159,4 @@ BOOLEAN: 布尔值（0/1）
 bash
 复制
 # 只需要Python 3.7+，无额外依赖
-python --version  # 
+python --version  

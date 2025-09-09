@@ -89,6 +89,42 @@ class RecordManager:
         finally:
             self.buffer_manager.unpin_page(page_id, True)
 
+    def insert_record_with_index(self, page_id: int, record: Record) -> int | None:
+        """插入记录并返回槽位索引（record_index）。失败返回None。"""
+        page = self.buffer_manager.get_page(page_id)
+        try:
+            self._ensure_page_initialized(page)
+
+            record_data = pickle.dumps(record.data, protocol=pickle.HIGHEST_PROTOCOL)
+            record_size = len(record_data)
+
+            record_count = page.read_int(0)
+            free_space_offset = page.read_int(4)
+
+            if record_count >= self.MAX_RECORDS_PER_PAGE:
+                return None
+            if free_space_offset + 4 + record_size > page.PAGE_SIZE:
+                return None
+
+            # 将要使用的槽位索引
+            record_index = record_count
+
+            page.write_int(free_space_offset, record_size)
+            page.write_bytes(free_space_offset + 4, record_data)
+
+            offset_pos = self.OFFSET_TABLE_START + record_index * 4
+            page.write_int(offset_pos, free_space_offset)
+
+            page.write_int(0, record_count + 1)
+            page.write_int(4, free_space_offset + 4 + record_size)
+
+            return record_index
+        except Exception as e:
+            print(f"插入记录(带索引)时出错: {e}")
+            return None
+        finally:
+            self.buffer_manager.unpin_page(page_id, True)
+
     def get_records(self, page_id: int) -> List[Record]:
         """获取页面中的所有记录"""
         page = self.buffer_manager.get_page(page_id)
@@ -161,6 +197,40 @@ class RecordManager:
             self.buffer_manager.unpin_page(page_id, False)
 
         return records
+
+    def get_records_with_indices(self, page_id: int) -> List[tuple[int, Record]]:
+        """获取页面中的所有记录，返回 (record_index, Record)。"""
+        page = self.buffer_manager.get_page(page_id)
+        results: List[tuple[int, Record]] = []
+        try:
+            self._ensure_page_initialized(page)
+            record_count = page.read_int(0)
+            if record_count == 0:
+                return results
+            for i in range(record_count):
+                try:
+                    offset_pos = self.OFFSET_TABLE_START + i * 4
+                    record_offset = page.read_int(offset_pos)
+                    if record_offset == -1:
+                        continue
+                    record_size = page.read_int(record_offset)
+                    if record_size <= 0 or record_size > page.PAGE_SIZE:
+                        continue
+                    if (
+                        record_offset < self.DATA_START
+                        or record_offset + 4 + record_size > page.PAGE_SIZE
+                    ):
+                        continue
+                    record_data = page.read_bytes(record_offset + 4, record_size)
+                    if not record_data or len(record_data) != record_size:
+                        continue
+                    data = pickle.loads(record_data)
+                    results.append((i, Record(data)))
+                except Exception:
+                    continue
+        finally:
+            self.buffer_manager.unpin_page(page_id, False)
+        return results
 
     def delete_record(self, page_id: int, record_index: int) -> bool:
         """删除页面中的指定记录"""
