@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sql import SQLLexer, SQLParser
 from sql.ast_nodes import CreateIndexStatement, DropIndexStatement
+from sql.lexer import TokenType
+from enum import auto
 
 
 def test_lexer():
@@ -140,6 +142,100 @@ def test_integration():
         traceback.print_exc()
 
 
+def test_join():
+    """测试JOIN功能"""
+    print("\n=== 测试JOIN功能 ===")
+    try:
+        from interface.database import SimpleDatabase
+        db = SimpleDatabase("test_join.db")
+
+        # 创建表
+        db.execute_sql("CREATE TABLE students (id INTEGER PRIMARY KEY, name VARCHAR(20))")
+        db.execute_sql("CREATE TABLE scores (id INTEGER PRIMARY KEY, student_id INTEGER, score INTEGER)")
+
+        # 插入数据
+        db.execute_sql("INSERT INTO students (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        db.execute_sql("INSERT INTO scores (id, student_id, score) VALUES (1, 1, 95), (2, 2, 88), (3, 1, 100)")
+
+        # 测试JOIN
+        print("\n1. INNER JOIN:")
+        result = db.execute_sql(
+            "SELECT students.id, students.name, scores.score FROM students JOIN scores ON students.id = scores.student_id"
+        )
+        print(f"JOIN原始返回: {result}")
+        if not result.get('success', True):
+            print(f"SQL执行失败: {result}")
+        else:
+            print(f"JOIN结果: {result['data']}")
+        assert len(result['data']) == 3, "JOIN结果行数应为3"
+        assert any(row['name'] == 'Alice' and row['score'] == 95 for row in result['data'])
+        assert any(row['name'] == 'Alice' and row['score'] == 100 for row in result['data'])
+        assert any(row['name'] == 'Bob' and row['score'] == 88 for row in result['data'])
+
+        # 测试JOIN+WHERE
+        print("\n2. JOIN + WHERE:")
+        result = db.execute_sql(
+            "SELECT students.name, scores.score FROM students JOIN scores ON students.id = scores.student_id WHERE scores.score > 90"
+        )
+        print(f"JOIN+WHERE结果: {result['data']}")
+        assert all(row['score'] > 90 for row in result['data'])
+
+        db.close()
+        if os.path.exists("test_join.db"):
+            os.remove("test_join.db")
+        print("✅ JOIN功能测试通过")
+    except Exception as e:
+        print(f"❌ JOIN测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def test_aggregate():
+    """测试聚合函数功能"""
+    print("\n=== 测试聚合函数功能 ===")
+    try:
+        from interface.database import SimpleDatabase
+        db = SimpleDatabase("test_agg.db")
+
+        # 创建表
+        db.execute_sql("CREATE TABLE scores (id INTEGER PRIMARY KEY, student_id INTEGER, score INTEGER)")
+        db.execute_sql("INSERT INTO scores (id, student_id, score) VALUES (1, 1, 95), (2, 2, 88), (3, 1, 100), (4, 2, 70)")
+
+        # COUNT
+        result = db.execute_sql("SELECT COUNT(*) FROM scores")
+        print(f"COUNT结果: {result}")
+        assert result['data'][0]['COUNT'] == 4
+
+        # SUM
+        result = db.execute_sql("SELECT SUM(score) FROM scores")
+        print(f"SUM结果: {result}")
+        assert result['data'][0]['SUM'] == 353
+
+        # AVG
+        result = db.execute_sql("SELECT AVG(score) FROM scores")
+        print(f"AVG结果: {result}")
+        assert abs(result['data'][0]['AVG'] - 88.25) < 1e-6
+
+        # MIN
+        result = db.execute_sql("SELECT MIN(score) FROM scores")
+        print(f"MIN结果: {result}")
+        assert result['data'][0]['MIN'] == 70
+
+        # MAX
+        result = db.execute_sql("SELECT MAX(score) FROM scores")
+        print(f"MAX结果: {result}")
+        assert result['data'][0]['MAX'] == 100
+
+        db.close()
+        if os.path.exists("test_agg.db"):
+            os.remove("test_agg.db")
+        print("✅ 聚合函数测试通过")
+    except Exception as e:
+        print(f"❌ 聚合函数测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def main():
     print("🧪 索引解析测试工具")
     print("=" * 40)
@@ -147,6 +243,8 @@ def main():
     test_lexer()
     test_parser()
     test_integration()
+    test_join()  # 新增JOIN测试
+    test_aggregate()  # 新增聚合函数测试
 
     print("\n✅ 测试完成")
 

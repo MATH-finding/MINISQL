@@ -240,56 +240,126 @@ class SQLExecutor:
         }
 
     def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
-        """执行SELECT - 修改版，支持索引优化"""
-        schema = self.catalog.get_table_schema(stmt.from_table)
-        if not schema:
-            raise ValueError(f"表 {stmt.from_table} 不存在")
-
-        # 新增：尝试使用索引优化查询
-        if self.index_manager and stmt.where_clause:
-            optimized_records = self._try_index_scan(stmt.from_table, stmt.where_clause)
-            if optimized_records is not None:
-                # 成功使用索引扫描
-                all_records = optimized_records
+        """执行SELECT - 扩展支持JOIN和聚合函数"""
+        # 递归获取结果集
+        def eval_from(from_table):
+            if isinstance(from_table, str):
+                # 单表
+                schema = self.catalog.get_table_schema(from_table)
+                if not schema:
+                    raise ValueError(f"表 {from_table} 不存在")
+                return self.table_manager.scan_table(from_table), from_table
+            elif isinstance(from_table, JoinClause):
+                # JOIN
+                left_records, left_name = eval_from(from_table.left)
+                right_records, right_name = eval_from(from_table.right)
+                result = []
+                for lrow in left_records:
+                    for rrow in right_records:
+                        # 合并两表数据，字段加前缀
+                        merged = {}
+                        for k, v in lrow.data.items():
+                            merged[f"{left_name}.{k}"] = v
+                        for k, v in rrow.data.items():
+                            merged[f"{right_name}.{k}"] = v
+                        # ON条件上下文
+                        if self._evaluate_condition(from_table.on, merged):
+                            result.append(type(lrow)(merged))
+                return result, f"({left_name} {from_table.join_type} JOIN {right_name})"
             else:
-                # 回退到全表扫描
-                all_records = self.table_manager.scan_table(stmt.from_table)
-        else:
-            # 全表扫描
-            all_records = self.table_manager.scan_table(stmt.from_table)
+                raise ValueError("未知的from_table类型")
 
-        # 应用WHERE条件过滤（如果没有被索引优化处理）
+        all_records, from_name = eval_from(stmt.from_table)
+
+        # WHERE过滤
         filtered_records = []
         for record in all_records:
-            if stmt.where_clause is None or self._evaluate_condition(
-                stmt.where_clause, record.data
-            ):
+            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, record.data):
                 filtered_records.append(record)
 
-        # 选择列（保持原有逻辑）
-        result_records = []
-        for record in filtered_records:
-            if stmt.columns == ["*"]:
-                result_records.append(dict(record.data))
-            else:
-                selected_data = {}
-                for col in stmt.columns:
-                    if isinstance(col, ColumnRef):
-                        col_name = col.column_name
-                        if col_name in record.data:
-                            selected_data[col_name] = record.data[col_name]
+        # 检查是否有聚合函数
+        if any(isinstance(col, AggregateFunction) for col in stmt.columns):
+            agg_result = {}
+            for col in stmt.columns:
+                if isinstance(col, AggregateFunction):
+                    func = col.func_name.upper()
+                    arg = col.arg
+                    if func == "COUNT":
+                        if arg == "*":
+                            agg_result["COUNT"] = len(filtered_records)
+                        elif isinstance(arg, ColumnRef):
+                            # 只统计非NULL
+                            agg_result["COUNT"] = sum(1 for r in filtered_records if self._evaluate_expression(arg, r.data) is not None)
                         else:
-                            raise ValueError(f"列 {col_name} 不存在")
+                            raise ValueError("COUNT参数不支持")
+                    elif func == "SUM":
+                        if isinstance(arg, ColumnRef):
+                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records]
+                            agg_result["SUM"] = sum(v for v in values if v is not None)
+                        else:
+                            raise ValueError("SUM参数不支持")
+                    elif func == "AVG":
+                        if isinstance(arg, ColumnRef):
+                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            agg_result["AVG"] = sum(values) / len(values) if values else None
+                        else:
+                            raise ValueError("AVG参数不支持")
+                    elif func == "MIN":
+                        if isinstance(arg, ColumnRef):
+                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            agg_result["MIN"] = min(values) if values else None
+                        else:
+                            raise ValueError("MIN参数不支持")
+                    elif func == "MAX":
+                        if isinstance(arg, ColumnRef):
+                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            agg_result["MAX"] = max(values) if values else None
+                        else:
+                            raise ValueError("MAX参数不支持")
                     else:
-                        if col in record.data:
-                            selected_data[col] = record.data[col]
+                        raise ValueError(f"不支持的聚合函数: {func}")
+            result_records = [agg_result]
+        else:
+            # 选择列
+            result_records = []
+            for record in filtered_records:
+                if stmt.columns == ["*"]:
+                    result_records.append(dict(record.data))
+                else:
+                    selected_data = {}
+                    for col in stmt.columns:
+                        if isinstance(col, ColumnRef):
+                            if col.table_name:
+                                key = f"{col.table_name}.{col.column_name}"
+                                if key in record.data:
+                                    selected_data[col.column_name] = record.data[key]
+                                else:
+                                    raise ValueError(f"列 {key} 不存在")
+                            else:
+                                matches = [k for k in record.data if k.endswith(f".{col.column_name}") or k == col.column_name]
+                                if len(matches) == 1:
+                                    key = matches[0]
+                                elif len(matches) == 0:
+                                    raise ValueError(f"列 {col.column_name} 不存在")
+                                else:
+                                    raise ValueError(f"列 {col.column_name} 不明确，请加表前缀")
+                                if key in record.data:
+                                    selected_data[col.column_name] = record.data[key]
+                                else:
+                                    raise ValueError(f"列 {key} 不存在")
+                        elif isinstance(col, AggregateFunction):
+                            # 聚合函数在非聚合上下文不支持
+                            raise ValueError("聚合函数只能单独出现在SELECT列表中")
                         else:
-                            raise ValueError(f"列 {col} 不存在")
-                result_records.append(selected_data)
+                            if col in record.data:
+                                selected_data[col] = record.data[col]
+                            else:
+                                raise ValueError(f"列 {col} 不存在")
+                    result_records.append(selected_data)
 
         return {
             "type": "SELECT",
-            "table_name": stmt.from_table,
+            "table_name": from_name,
             "rows_returned": len(result_records),
             "data": result_records,
             "success": True,
@@ -438,10 +508,15 @@ class SQLExecutor:
         return [record for i, record in enumerate(all_records) if i in record_ids]
 
     def _evaluate_expression(self, expr: Expression, context: Dict[str, Any]) -> Any:
-        """计算表达式的值"""
         if isinstance(expr, Literal):
             return expr.value
         elif isinstance(expr, ColumnRef):
+            if expr.table_name:
+                # 优先查找带前缀
+                key = f"{expr.table_name}.{expr.column_name}"
+                if key in context:
+                    return context[key]
+            # 回退查找无前缀
             return context.get(expr.column_name)
         else:
             raise ValueError(f"不支持的表达式类型: {type(expr)}")

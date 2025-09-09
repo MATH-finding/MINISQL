@@ -171,7 +171,19 @@ class SQLParser:
         # 解析选择列表
         columns = []
         while True:
-            if self.current_token.type == TokenType.STAR:
+            # 支持聚合函数
+            if self.current_token.type in (TokenType.COUNT, TokenType.SUM, TokenType.AVG, TokenType.MIN, TokenType.MAX):
+                func_type = self.current_token.type
+                self._advance()
+                self._expect(TokenType.LEFT_PAREN)
+                if self.current_token.type == TokenType.STAR:
+                    arg = "*"
+                    self._advance()
+                else:
+                    arg = self._parse_expression()
+                self._expect(TokenType.RIGHT_PAREN)
+                columns.append(AggregateFunction(func_type.name, arg))
+            elif self.current_token.type == TokenType.STAR:
                 columns.append("*")
                 self._advance()
             else:
@@ -191,7 +203,34 @@ class SQLParser:
                 break
 
         self._expect(TokenType.FROM)
-        table_name = self._expect(TokenType.IDENTIFIER).value
+        from_table = self._expect(TokenType.IDENTIFIER).value
+
+        # 解析JOIN链
+        join_clause = None
+        left = from_table
+        while self.current_token and self.current_token.type in (TokenType.JOIN, TokenType.INNER, TokenType.LEFT, TokenType.RIGHT):
+            # 解析JOIN类型
+            if self.current_token.type == TokenType.INNER:
+                join_type = "INNER"
+                self._advance()
+                self._expect(TokenType.JOIN)
+            elif self.current_token.type == TokenType.LEFT:
+                join_type = "LEFT"
+                self._advance()
+                self._expect(TokenType.JOIN)
+            elif self.current_token.type == TokenType.RIGHT:
+                join_type = "RIGHT"
+                self._advance()
+                self._expect(TokenType.JOIN)
+            else:
+                join_type = "INNER"  # 默认INNER JOIN
+                self._expect(TokenType.JOIN)
+
+            right_table = self._expect(TokenType.IDENTIFIER).value
+            self._expect(TokenType.ON)
+            on_expr = self._parse_where_expression()
+            left = JoinClause(left, right_table, join_type, on_expr)
+        # left为最终的from_table（str或JoinClause）
 
         # WHERE 子句
         where_clause = None
@@ -199,7 +238,7 @@ class SQLParser:
             self._advance()
             where_clause = self._parse_where_expression()
 
-        return SelectStatement(columns, table_name, where_clause)
+        return SelectStatement(columns, left, where_clause)
 
     def _parse_where_expression(self) -> Expression:
         """解析 WHERE 表达式"""
