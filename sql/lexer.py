@@ -67,6 +67,7 @@ class TokenType(Enum):
     UNCOMMITTED_KW = "UNCOMMITTED_KW"
     REPEATABLE = "REPEATABLE"
     SERIALIZABLE = "SERIALIZABLE"
+    TRUNCATE = "TRUNCATE"
 
     # 布尔值
     TRUE = "TRUE"
@@ -165,6 +166,7 @@ class SQLLexer:
         "UNCOMMITTED": TokenType.UNCOMMITTED_KW,
         "REPEATABLE": TokenType.REPEATABLE,
         "SERIALIZABLE": TokenType.SERIALIZABLE,
+        "TRUNCATE": TokenType.TRUNCATE,
     }
 
     def __init__(self, sql: str):

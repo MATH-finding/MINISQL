@@ -188,7 +188,7 @@ class SQLShell:
         # 对于所有可能修改数据的操作，都强制保存
         if any(
             command.upper().startswith(cmd)
-            for cmd in ["CREATE", "INSERT", "UPDATE", "DELETE", "DROP"]
+            for cmd in ["CREATE", "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE"]
         ):
             try:
                 self.database.flush_all()
@@ -269,6 +269,7 @@ class SQLShell:
   ROLLBACK                                             - 回滚事务（当前未实现）
   SET AUTOCOMMIT = 0|1                                 - 设置自动提交
   SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
+  TRUNCATE TABLE table_name                            - 快速清空表数据
 
 🧭 会话管理:
   \\session list                                      - 列出会话

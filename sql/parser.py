@@ -23,6 +23,8 @@ class SQLParser:
             return self._parse_create_statement()  # 改为这个新方法
         elif self.current_token.type == TokenType.DROP:
             return self._parse_drop_statement()  # 添加DROP支持
+        elif self.current_token.type == TokenType.TRUNCATE:  # 新增
+            return self._parse_truncate()
         elif self.current_token.type == TokenType.INSERT:
             return self._parse_insert()
         elif self.current_token.type == TokenType.SELECT:
@@ -87,9 +89,18 @@ class SQLParser:
 
         # 解析数据类型
         if self.current_token.type in (
-            TokenType.INTEGER, TokenType.VARCHAR, TokenType.FLOAT, TokenType.BOOLEAN,
-            TokenType.CHAR, TokenType.DECIMAL, TokenType.DATE, TokenType.TIME,
-            TokenType.DATETIME, TokenType.BIGINT, TokenType.TINYINT, TokenType.TEXT,
+            TokenType.INTEGER,
+            TokenType.VARCHAR,
+            TokenType.FLOAT,
+            TokenType.BOOLEAN,
+            TokenType.CHAR,
+            TokenType.DECIMAL,
+            TokenType.DATE,
+            TokenType.TIME,
+            TokenType.DATETIME,
+            TokenType.BIGINT,
+            TokenType.TINYINT,
+            TokenType.TEXT,
         ):
             data_type = self.current_token.value.upper()
             self._advance()
@@ -100,7 +111,10 @@ class SQLParser:
         length = None
         precision = None
         scale = None
-        if data_type in ("VARCHAR", "CHAR") and self.current_token.type == TokenType.LEFT_PAREN:
+        if (
+            data_type in ("VARCHAR", "CHAR")
+            and self.current_token.type == TokenType.LEFT_PAREN
+        ):
             self._advance()
             length = int(self._expect(TokenType.NUMBER).value)
             self._expect(TokenType.RIGHT_PAREN)
@@ -193,7 +207,13 @@ class SQLParser:
         columns = []
         while True:
             # 支持聚合函数
-            if self.current_token.type in (TokenType.COUNT, TokenType.SUM, TokenType.AVG, TokenType.MIN, TokenType.MAX):
+            if self.current_token.type in (
+                TokenType.COUNT,
+                TokenType.SUM,
+                TokenType.AVG,
+                TokenType.MIN,
+                TokenType.MAX,
+            ):
                 func_type = self.current_token.type
                 self._advance()
                 self._expect(TokenType.LEFT_PAREN)
@@ -229,7 +249,12 @@ class SQLParser:
         # 解析JOIN链
         join_clause = None
         left = from_table
-        while self.current_token and self.current_token.type in (TokenType.JOIN, TokenType.INNER, TokenType.LEFT, TokenType.RIGHT):
+        while self.current_token and self.current_token.type in (
+            TokenType.JOIN,
+            TokenType.INNER,
+            TokenType.LEFT,
+            TokenType.RIGHT,
+        ):
             # 解析JOIN类型
             if self.current_token.type == TokenType.INNER:
                 join_type = "INNER"
@@ -474,7 +499,10 @@ class SQLParser:
         if self.current_token.type == TokenType.AUTOCOMMIT:
             self._advance()
             self._expect(TokenType.EQUALS)
-            if self.current_token.type == TokenType.NUMBER and self.current_token.value in ("0", "1"):
+            if (
+                self.current_token.type == TokenType.NUMBER
+                and self.current_token.value in ("0", "1")
+            ):
                 enabled = self.current_token.value == "1"
                 self._advance()
                 return SetAutocommit(enabled)
@@ -506,4 +534,13 @@ class SQLParser:
             else:
                 raise SyntaxError("未知的隔离级别")
         else:
-            raise SyntaxError("仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ...")
+            raise SyntaxError(
+                "仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ..."
+            )
+
+    def _parse_truncate(self) -> TruncateStatement:
+        """解析 TRUNCATE TABLE 语句"""
+        self._expect(TokenType.TRUNCATE)
+        self._expect(TokenType.TABLE)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        return TruncateStatement(table_name)

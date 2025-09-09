@@ -137,7 +137,9 @@ class TableManager:
 
         return updated_count
 
-    def insert_record_with_location(self, table_name: str, record_data: Dict[str, Any]) -> Optional[tuple[int, int]]:
+    def insert_record_with_location(
+        self, table_name: str, record_data: Dict[str, Any]
+    ) -> Optional[tuple[int, int]]:
         """插入记录并返回 (page_id, record_index)；失败返回 None。"""
         schema = self.catalog.get_table_schema(table_name)
         if not schema:
@@ -149,7 +151,10 @@ class TableManager:
         if schema.primary_key_columns:
             existing_records = self.scan_table(table_name)
             for existing in existing_records:
-                if all(existing.get(pk) == record_data.get(pk) for pk in schema.primary_key_columns):
+                if all(
+                    existing.get(pk) == record_data.get(pk)
+                    for pk in schema.primary_key_columns
+                ):
                     raise ValueError(f"主键冲突: {schema.primary_key_columns}")
 
         pages = self.catalog.get_table_pages(table_name)
@@ -165,7 +170,9 @@ class TableManager:
             return None
         return (new_page_id, idx)
 
-    def scan_table_with_locations(self, table_name: str) -> List[tuple[int, int, Record]]:
+    def scan_table_with_locations(
+        self, table_name: str
+    ) -> List[tuple[int, int, Record]]:
         """扫描表，返回 (page_id, record_index, Record)。"""
         schema = self.catalog.get_table_schema(table_name)
         if not schema:
@@ -181,7 +188,30 @@ class TableManager:
         """按位置删除一条记录。"""
         return self.record_manager.delete_record(page_id, record_index)
 
-    def update_at(self, table_name: str, page_id: int, record_index: int, new_data: Dict[str, Any]) -> bool:
+    def update_at(
+        self, table_name: str, page_id: int, record_index: int, new_data: Dict[str, Any]
+    ) -> bool:
         """按位置更新一条记录。"""
         new_record = Record(new_data)
         return self.record_manager.update_record(page_id, record_index, new_record)
+
+    def truncate_table(self, table_name: str) -> Dict[str, Any]:
+        """快速清空表数据"""
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+
+        # 获取删除前的记录数
+        record_count = self.count_records(table_name)
+
+        # 获取表的所有页面并清空
+        pages = self.catalog.get_table_pages(table_name)
+        for page_id in pages:
+            # 使用 RecordManager 的初始化方法清空页面
+            self.record_manager.initialize_page(page_id)
+
+        return {
+            "table_name": table_name,
+            "records_deleted": record_count,
+            "success": True,
+        }

@@ -178,6 +178,8 @@ class SQLExecutor:
             result = self._execute_update_with_undo(ast)
         elif isinstance(ast, DeleteStatement):
             result = self._execute_delete_with_undo(ast)
+        elif isinstance(ast, TruncateStatement):
+            result = self._execute_truncate(ast)
         elif isinstance(ast, BeginTransaction):
             txn_id = self.txn.begin()
             return {
@@ -1003,3 +1005,45 @@ class SQLExecutor:
             "success": True,
             "message": f"成功删除 {deleted} 行",
         }
+
+    def _execute_truncate(self, stmt: TruncateStatement) -> Dict[str, Any]:
+        """执行TRUNCATE TABLE"""
+        # SERIALIZABLE: 写锁
+        self._maybe_lock_exclusive(stmt.table_name)
+
+        try:
+            # 清空相关索引
+            if self.index_manager:
+                table_indexes = self.index_manager.get_table_indexes(stmt.table_name)
+                if table_indexes:
+                    for index_name in table_indexes:
+                        # 重建空的索引
+                        index_info = self.index_manager.indexes[index_name]
+                        # 创建新的空B+树根节点
+                        from storage.btree import BPlusTree
+
+                        btree = BPlusTree(
+                            self.buffer_manager,
+                            self.page_manager,
+                            is_unique=index_info.is_unique,
+                        )
+                        # 更新索引信息中的根页面ID
+                        index_info.root_page_id = btree.root_page_id
+
+            # 清空表数据
+            result = self.table_manager.truncate_table(stmt.table_name)
+
+            return {
+                "type": "TRUNCATE",
+                "table_name": stmt.table_name,
+                "rows_deleted": result["records_deleted"],
+                "success": True,
+                "message": f"表 {stmt.table_name} 已清空，删除了 {result['records_deleted']} 行",
+            }
+        except Exception as e:
+            return {
+                "type": "TRUNCATE",
+                "table_name": stmt.table_name,
+                "success": False,
+                "message": f"清空表失败: {str(e)}",
+            }

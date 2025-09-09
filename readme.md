@@ -159,4 +159,4 @@ BOOLEAN: 布尔值（0/1）
 bash
 复制
 # 只需要Python 3.7+，无额外依赖
-python --version  # 
+python --version  
