@@ -2,6 +2,8 @@
 
 ## 新特性 - B+树索引
 
+拓展：1. 查询优化器2. 并发控制3. 高级索引4. 数据压缩5. 分区表
+
 ### 索引操作
 - `CREATE INDEX index_name ON table_name (column_name)` - 创建普通索引
 - `CREATE UNIQUE INDEX index_name ON table_name (column_name)` - 创建唯一索引

@@ -194,3 +194,39 @@ class JoinClause(ASTNode):
 
     def __repr__(self):
         return f"({self.left} {self.join_type} JOIN {self.right} ON {self.on})"
+        
+class UpdateStatement(Statement):
+    """UPDATE 语句"""
+
+    def __init__(
+        self,
+        table_name: str,
+        set_clauses: List[Dict[str, Expression]],
+        where_clause: Optional[Expression] = None,
+    ):
+        self.table_name = table_name
+        self.set_clauses = set_clauses  # [{'column': str, 'value': Expression}]
+        self.where_clause = where_clause
+
+    def __repr__(self):
+        set_parts = [
+            f"{clause['column']} = {clause['value']}" for clause in self.set_clauses
+        ]
+        result = f"UPDATE {self.table_name} SET {', '.join(set_parts)}"
+        if self.where_clause:
+            result += f" WHERE {self.where_clause}"
+        return result
+
+
+class DeleteStatement(Statement):
+    """DELETE 语句"""
+
+    def __init__(self, table_name: str, where_clause: Optional[Expression] = None):
+        self.table_name = table_name
+        self.where_clause = where_clause
+
+    def __repr__(self):
+        result = f"DELETE FROM {self.table_name}"
+        if self.where_clause:
+            result += f" WHERE {self.where_clause}"
+        return result

@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.13 (MINISQL)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (MINISQL)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.11 (MINISQLxxx)" project-jdk-type="Python SDK" />
 </project>

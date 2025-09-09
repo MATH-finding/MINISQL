@@ -35,6 +35,8 @@ class SimpleDatabase:
             self.table_manager, self.catalog, self.index_manager
         )
 
+        self.executor = self.sql_executor
+
         print(f"数据库 {db_file} 已连接")
 
     def execute_sql(self, sql: str) -> Dict[str, Any]:
