@@ -18,7 +18,7 @@ class SQLExecutor:
     ):
         self.table_manager = table_manager
         self.catalog = catalog
-        self.index_manager = index_manager  # 添加这行
+        self.index_manager = index_manager
 
         # 操作符映射
         self.comparison_ops = {
@@ -38,10 +38,14 @@ class SQLExecutor:
             return self._execute_insert(ast)
         elif isinstance(ast, SelectStatement):
             return self._execute_select(ast)
-        elif isinstance(ast, CreateIndexStatement):  # 新增
+        elif isinstance(ast, CreateIndexStatement):
             return self._execute_create_index(ast)
-        elif isinstance(ast, DropIndexStatement):  # 新增
+        elif isinstance(ast, DropIndexStatement):
             return self._execute_drop_index(ast)
+        elif isinstance(ast, UpdateStatement):  # 新增
+            return self._execute_update(ast)
+        elif isinstance(ast, DeleteStatement):  # 新增
+            return self._execute_delete(ast)
         else:
             raise ValueError(f"不支持的语句类型: {type(ast)}")
 
@@ -79,7 +83,7 @@ class SQLExecutor:
                     nullable = False
                 elif constraint == "PRIMARY KEY":
                     primary_key = True
-                    nullable = False  # 主键默认不为空
+                    nullable = False
 
             column = ColumnDefinition(
                 name=col_def["name"],
@@ -100,102 +104,8 @@ class SQLExecutor:
             "message": f"表 {stmt.table_name} 创建成功",
         }
 
-    # def _execute_insert(self, stmt: InsertStatement) -> Dict[str, Any]:
-    #     """执行INSERT"""
-    #     schema = self.catalog.get_table_schema(stmt.table_name)
-    #     if not schema:
-    #         raise ValueError(f"表 {stmt.table_name} 不存在")
-
-    #     inserted_count = 0
-
-    #     for value_row in stmt.values:
-    #         # 构建记录数据
-    #         record_data = {}
-
-    #         if stmt.columns:
-    #             # 指定了列名
-    #             if len(stmt.columns) != len(value_row):
-    #                 raise ValueError("列数和值数不匹配")
-
-    #             for i, col_name in enumerate(stmt.columns):
-    #                 value = self._evaluate_expression(value_row[i], {})
-    #                 record_data[col_name] = value
-    #         else:
-    #             # 未指定列名，按顺序插入所有列
-    #             if len(value_row) != len(schema.columns):
-    #                 raise ValueError("值数和表列数不匹配")
-
-    #             for i, column in enumerate(schema.columns):
-    #                 value = self._evaluate_expression(value_row[i], {})
-    #                 record_data[column.name] = value
-
-    #         # 插入记录
-    #         try:
-    #             self.table_manager.insert_record(stmt.table_name, record_data)
-    #             inserted_count += 1
-    #         except Exception as e:
-    #             raise ValueError(f"插入记录失败: {str(e)}")
-
-    #     return {
-    #         "type": "INSERT",
-    #         "table_name": stmt.table_name,
-    #         "rows_inserted": inserted_count,
-    #         "success": True,
-    #         "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
-    #     }
-
-    # def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
-    #     """执行SELECT"""
-    #     schema = self.catalog.get_table_schema(stmt.from_table)
-    #     if not schema:
-    #         raise ValueError(f"表 {stmt.from_table} 不存在")
-
-    #     # 获取所有记录
-    #     all_records = self.table_manager.scan_table(stmt.from_table)
-
-    #     # 应用WHERE条件过滤
-    #     filtered_records = []
-    #     for record in all_records:
-    #         if stmt.where_clause is None or self._evaluate_condition(
-    #             stmt.where_clause, record.data
-    #         ):
-    #             filtered_records.append(record)
-
-    #     # 选择列
-    #     result_records = []
-    #     for record in filtered_records:
-    #         if stmt.columns == ["*"]:
-    #             # 选择所有列
-    #             result_records.append(dict(record.data))
-    #         else:
-    #             # 选择指定列
-    #             selected_data = {}
-    #             for col in stmt.columns:
-    #                 if isinstance(col, ColumnRef):
-    #                     col_name = col.column_name
-    #                     if col_name in record.data:
-    #                         selected_data[col_name] = record.data[col_name]
-    #                     else:
-    #                         raise ValueError(f"列 {col_name} 不存在")
-    #                 else:
-    #                     # 字符串形式的列名
-    #                     if col in record.data:
-    #                         selected_data[col] = record.data[col]
-    #                     else:
-    #                         raise ValueError(f"列 {col} 不存在")
-    #             result_records.append(selected_data)
-
-    #     return {
-    #         "type": "SELECT",
-    #         "table_name": stmt.from_table,
-    #         "rows_returned": len(result_records),
-    #         "data": result_records,
-    #         "success": True,
-    #         "message": f"查询返回 {len(result_records)} 行",
-    #     }
-
     def _execute_insert(self, stmt: InsertStatement) -> Dict[str, Any]:
-        """执行INSERT - 修改版，支持索引维护"""
+        """执行INSERT - 修复版，正确处理记录ID"""
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
@@ -207,7 +117,6 @@ class SQLExecutor:
             record_data = {}
 
             if stmt.columns:
-                # 指定了列名
                 if len(stmt.columns) != len(value_row):
                     raise ValueError("列数和值数不匹配")
 
@@ -215,7 +124,6 @@ class SQLExecutor:
                     value = self._evaluate_expression(value_row[i], {})
                     record_data[col_name] = value
             else:
-                # 未指定列名，按顺序插入所有列
                 if len(value_row) != len(schema.columns):
                     raise ValueError("值数和表列数不匹配")
 
@@ -223,17 +131,29 @@ class SQLExecutor:
                     value = self._evaluate_expression(value_row[i], {})
                     record_data[column.name] = value
 
-            # 插入记录
             try:
-                record_id = self.table_manager.insert_record(
-                    stmt.table_name, record_data
-                )
+                # 获取插入前的记录数，作为新记录的ID
+                all_records = self.table_manager.scan_table(stmt.table_name)
+                record_id = len(all_records)  # 新记录的ID
 
-                # 新增：如果有索引管理器，同时更新索引
+                # 插入记录到表中
+                self.table_manager.insert_record(stmt.table_name, record_data)
+
+                # 更新索引，使用正确的record_id
                 if self.index_manager:
-                    self.index_manager.insert_into_indexes(
-                        stmt.table_name, record_data, record_id
+                    table_indexes = self.index_manager.get_table_indexes(
+                        stmt.table_name
                     )
+                    for index_name in table_indexes:
+                        index_info = self.index_manager.indexes.get(index_name)
+                        if index_info and index_info.column_name in record_data:
+                            btree = self.index_manager.get_index(index_name)
+                            if btree:
+                                key = record_data[index_info.column_name]
+                                btree.insert(key, record_id)  # 存储正确的记录ID
+                                print(
+                                    f"DEBUG: 索引更新 {index_name}: {key} -> {record_id}"
+                                )
 
                 inserted_count += 1
             except Exception as e:
@@ -248,33 +168,40 @@ class SQLExecutor:
         }
 
     def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
-        """执行SELECT - 修改版，支持索引优化"""
+        """执行SELECT - 修复版，正确处理索引查询"""
         schema = self.catalog.get_table_schema(stmt.from_table)
         if not schema:
             raise ValueError(f"表 {stmt.from_table} 不存在")
 
-        # 新增：尝试使用索引优化查询
+        # 尝试使用索引优化查询
         if self.index_manager and stmt.where_clause:
             optimized_records = self._try_index_scan(stmt.from_table, stmt.where_clause)
             if optimized_records is not None:
-                # 成功使用索引扫描
-                all_records = optimized_records
+                print(f"DEBUG: 使用索引扫描，找到 {len(optimized_records)} 条记录")
+                # 使用索引扫描的结果，不需要再次过滤WHERE条件
+                filtered_records = optimized_records
             else:
-                # 回退到全表扫描
+                print("DEBUG: 索引扫描失败，使用全表扫描")
                 all_records = self.table_manager.scan_table(stmt.from_table)
+                # 应用WHERE条件过滤
+                filtered_records = []
+                for record in all_records:
+                    if stmt.where_clause is None or self._evaluate_condition(
+                        stmt.where_clause, record.data
+                    ):
+                        filtered_records.append(record)
         else:
             # 全表扫描
             all_records = self.table_manager.scan_table(stmt.from_table)
+            # 应用WHERE条件过滤
+            filtered_records = []
+            for record in all_records:
+                if stmt.where_clause is None or self._evaluate_condition(
+                    stmt.where_clause, record.data
+                ):
+                    filtered_records.append(record)
 
-        # 应用WHERE条件过滤（如果没有被索引优化处理）
-        filtered_records = []
-        for record in all_records:
-            if stmt.where_clause is None or self._evaluate_condition(
-                stmt.where_clause, record.data
-            ):
-                filtered_records.append(record)
-
-        # 选择列（保持原有逻辑）
+        # 选择列
         result_records = []
         for record in filtered_records:
             if stmt.columns == ["*"]:
@@ -304,14 +231,11 @@ class SQLExecutor:
             "message": f"查询返回 {len(result_records)} 行",
         }
 
-    # 新增方法：索引相关操作
-
     def _execute_create_index(self, stmt: CreateIndexStatement) -> Dict[str, Any]:
         """执行CREATE INDEX"""
         if not self.index_manager:
             raise ValueError("索引管理器未初始化")
 
-        # 验证表和列是否存在
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
@@ -320,7 +244,6 @@ class SQLExecutor:
         if not column_exists:
             raise ValueError(f"列 {stmt.column_name} 不存在于表 {stmt.table_name}")
 
-        # 创建索引
         success = self.index_manager.create_index(
             stmt.index_name, stmt.table_name, stmt.column_name, stmt.is_unique
         )
@@ -328,7 +251,7 @@ class SQLExecutor:
         if not success:
             raise ValueError(f"索引 {stmt.index_name} 已存在")
 
-        # 为现有数据构建索引
+        # 为现有数据构建索引，使用正确的记录ID
         self._build_index_for_existing_data(
             stmt.index_name, stmt.table_name, stmt.column_name
         )
@@ -361,23 +284,23 @@ class SQLExecutor:
     def _build_index_for_existing_data(
         self, index_name: str, table_name: str, column_name: str
     ):
-        """为现有数据构建索引"""
+        """为现有数据构建索引 - 修复版"""
         btree = self.index_manager.get_index(index_name)
         if not btree:
             return
 
-        # 扫描表中所有记录
         all_records = self.table_manager.scan_table(table_name)
 
-        for i, record in enumerate(all_records):
+        for record_id, record in enumerate(all_records):
             if column_name in record.data:
                 key = record.data[column_name]
-                btree.insert(key, i)  # 使用记录索引作为值
+                btree.insert(key, record_id)  # 存储正确的记录ID
+                print(f"DEBUG: 构建索引 {index_name}: {key} -> {record_id}")
 
     def _try_index_scan(
         self, table_name: str, where_clause: Expression
     ) -> Optional[List[Record]]:
-        """尝试使用索引扫描优化查询"""
+        """尝试使用索引扫描优化查询 - 修复版"""
         if not self.index_manager:
             return None
 
@@ -390,18 +313,22 @@ class SQLExecutor:
         if not btree:
             return None
 
-        # 根据操作符类型执行不同的索引扫描
+        print(f"DEBUG: 使用索引 {index_name} 查找 {column_name} {operator} {value}")
+
         if operator == "=":
             # 精确查找
-            record_ids = btree.search(value)
-            if record_ids is not None:
-                # 修改这里：record_ids 可能是单个值，需要转换为列表
-                if isinstance(record_ids, list):
-                    return self._get_records_by_ids(table_name, record_ids)
+            record_id = btree.search(value)
+            print(f"DEBUG: 索引搜索结果: {record_id}")
+
+            if record_id is not None:
+                if isinstance(record_id, (list, tuple)):
+                    record_ids = list(record_id)
                 else:
-                    return self._get_records_by_ids(table_name, [record_ids])
+                    record_ids = [record_id]
+
+                return self._get_records_by_ids(table_name, record_ids)
         elif operator in ["<", "<=", ">", ">="]:
-            # 范围查询（简化实现）
+            # 范围查询
             if operator in ["<", "<="]:
                 results = btree.range_search(float("-inf"), value)
             else:
@@ -409,6 +336,7 @@ class SQLExecutor:
 
             record_ids = [record_id for _, record_id in results]
             return self._get_records_by_ids(table_name, record_ids)
+
         return None
 
     def _analyze_where_for_index(
@@ -418,16 +346,13 @@ class SQLExecutor:
         if not isinstance(where_clause, BinaryOp):
             return None
 
-        # 只处理简单的列=值条件
         if isinstance(where_clause.left, ColumnRef) and isinstance(
             where_clause.right, Literal
         ):
-
             column_name = where_clause.left.column_name
             operator = where_clause.operator
             value = where_clause.right.value
 
-            # 检查是否有该列的索引
             available_indexes = self.index_manager.get_table_indexes(table_name)
             for index_name in available_indexes:
                 index_info = self.index_manager.indexes.get(index_name)
@@ -439,11 +364,20 @@ class SQLExecutor:
     def _get_records_by_ids(
         self, table_name: str, record_ids: List[int]
     ) -> List[Record]:
-        """根据记录ID获取记录（简化实现）"""
-        # 这里需要根据你的存储实现来获取特定ID的记录
-        # 暂时回退到全表扫描然后过滤
+        """根据记录ID获取记录 - 修复版"""
         all_records = self.table_manager.scan_table(table_name)
-        return [record for i, record in enumerate(all_records) if i in record_ids]
+        result = []
+
+        for record_id in record_ids:
+            if 0 <= record_id < len(all_records):
+                result.append(all_records[record_id])
+            else:
+                print(
+                    f"DEBUG: 记录ID {record_id} 超出范围，总记录数: {len(all_records)}"
+                )
+
+        print(f"DEBUG: 根据ID获取到 {len(result)} 条记录")
+        return result
 
     def _evaluate_expression(self, expr: Expression, context: Dict[str, Any]) -> Any:
         """计算表达式的值"""
@@ -481,3 +415,66 @@ class SQLExecutor:
 
         else:
             raise ValueError(f"不支持的条件类型: {type(condition)}")
+
+    def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
+        """执行UPDATE语句"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 构建更新数据
+        updates = {}
+        for set_clause in stmt.set_clauses:
+            column_name = set_clause["column"]
+            value_expr = set_clause["value"]
+            # 计算表达式值（对于简单字面量）
+            if isinstance(value_expr, Literal):
+                updates[column_name] = value_expr.value
+            else:
+                raise ValueError(f"UPDATE暂时只支持字面量值")
+
+        # 构建条件函数
+        condition_func = None
+        if stmt.where_clause:
+            condition_func = lambda record_data: self._evaluate_condition(
+                stmt.where_clause, record_data
+            )
+
+        # 执行更新
+        updated_count = self.table_manager.update_records(
+            stmt.table_name, updates, condition_func
+        )
+
+        return {
+            "type": "UPDATE",
+            "table_name": stmt.table_name,
+            "rows_updated": updated_count,
+            "success": True,
+            "message": f"成功更新 {updated_count} 行",
+        }
+
+    def _execute_delete(self, stmt: DeleteStatement) -> Dict[str, Any]:
+        """执行DELETE语句"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 构建条件函数
+        condition_func = None
+        if stmt.where_clause:
+            condition_func = lambda record_data: self._evaluate_condition(
+                stmt.where_clause, record_data
+            )
+
+        # 执行删除
+        deleted_count = self.table_manager.delete_records(
+            stmt.table_name, condition_func
+        )
+
+        return {
+            "type": "DELETE",
+            "table_name": stmt.table_name,
+            "rows_deleted": deleted_count,
+            "success": True,
+            "message": f"成功删除 {deleted_count} 行",
+        }

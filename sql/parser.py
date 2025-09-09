@@ -19,7 +19,6 @@ class SQLParser:
         """解析SQL语句"""
         if not self.current_token or self.current_token.type == TokenType.EOF:
             raise SyntaxError("空的SQL语句")
-
         if self.current_token.type == TokenType.CREATE:
             return self._parse_create_statement()  # 改为这个新方法
         elif self.current_token.type == TokenType.DROP:
@@ -28,6 +27,10 @@ class SQLParser:
             return self._parse_insert()
         elif self.current_token.type == TokenType.SELECT:
             return self._parse_select()
+        elif self.current_token.type == TokenType.UPDATE:  # 新增
+            return self._parse_update()
+        elif self.current_token.type == TokenType.DELETE:  # 新增
+            return self._parse_delete()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
 
@@ -347,3 +350,52 @@ class SQLParser:
             raise SyntaxError(
                 f"目前只支持DROP INDEX，但得到DROP {self.current_token.value}"
             )
+
+    def _parse_update(self) -> UpdateStatement:
+        """解析UPDATE语句: UPDATE table SET col1=val1, col2=val2 WHERE condition"""
+        self._expect(TokenType.UPDATE)
+
+        # 获取表名
+        table_name = self._expect(TokenType.IDENTIFIER).value
+
+        # 解析SET子句
+        self._expect(TokenType.SET)
+        set_clauses = []
+
+        while True:
+            # 解析 column = value
+            column_name = self._expect(TokenType.IDENTIFIER).value
+            self._expect(TokenType.EQUALS)
+            value_expr = self._parse_expression()
+
+            set_clauses.append({"column": column_name, "value": value_expr})
+
+            # 检查是否有更多SET子句
+            if self.current_token.type == TokenType.COMMA:
+                self._expect(TokenType.COMMA)
+            else:
+                break
+
+        # 可选的WHERE子句
+        where_clause = None
+        if self.current_token and self.current_token.type == TokenType.WHERE:
+            self._expect(TokenType.WHERE)
+            where_clause = self._parse_where_expression()  # 使用现有的WHERE解析方法
+
+        return UpdateStatement(table_name, set_clauses, where_clause)
+
+    def _parse_delete(self) -> DeleteStatement:
+        """解析DELETE语句: DELETE FROM table WHERE condition"""
+        self._expect(TokenType.DELETE)
+        self._expect(TokenType.FROM)
+
+        # 获取表名
+        table_name = self._expect(TokenType.IDENTIFIER).value
+
+        # 可选的WHERE子句
+        where_clause = None
+        if self.current_token and self.current_token.type == TokenType.WHERE:
+            self._expect(TokenType.WHERE)
+            where_clause = self._parse_where_expression()  # 使用现有的WHERE解析方法
+
+        return DeleteStatement(table_name, where_clause)

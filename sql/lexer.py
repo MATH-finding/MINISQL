@@ -41,6 +41,9 @@ class TokenType(Enum):
     INDEX = "INDEX"
     ON = "ON"
     DROP = "DROP"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    SET = "SET"
 
     # 布尔值
     TRUE = "TRUE"
@@ -113,6 +116,9 @@ class SQLLexer:
         "INDEX": TokenType.INDEX,
         "ON": TokenType.ON,
         "DROP": TokenType.DROP,
+        "UPDATE": TokenType.UPDATE,
+        "DELETE": TokenType.DELETE,
+        "SET": TokenType.SET,
     }
 
     def __init__(self, sql: str):
