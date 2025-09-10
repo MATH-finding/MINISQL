@@ -31,6 +31,8 @@ class SQLParser:
             return self._parse_update()
         elif self.current_token.type == TokenType.DELETE:  # 新增
             return self._parse_delete()
+        elif self.current_token.type == TokenType.TRUNCATE:
+            return self._parse_truncate()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
 
@@ -77,9 +79,18 @@ class SQLParser:
 
         # 解析数据类型
         if self.current_token.type in (
-            TokenType.INTEGER, TokenType.VARCHAR, TokenType.FLOAT, TokenType.BOOLEAN,
-            TokenType.CHAR, TokenType.DECIMAL, TokenType.DATE, TokenType.TIME,
-            TokenType.DATETIME, TokenType.BIGINT, TokenType.TINYINT, TokenType.TEXT,
+            TokenType.INTEGER,
+            TokenType.VARCHAR,
+            TokenType.FLOAT,
+            TokenType.BOOLEAN,
+            TokenType.CHAR,
+            TokenType.DECIMAL,
+            TokenType.DATE,
+            TokenType.TIME,
+            TokenType.DATETIME,
+            TokenType.BIGINT,
+            TokenType.TINYINT,
+            TokenType.TEXT,
         ):
             data_type = self.current_token.value.upper()
             self._advance()
@@ -90,7 +101,10 @@ class SQLParser:
         length = None
         precision = None
         scale = None
-        if data_type in ("VARCHAR", "CHAR") and self.current_token.type == TokenType.LEFT_PAREN:
+        if (
+            data_type in ("VARCHAR", "CHAR")
+            and self.current_token.type == TokenType.LEFT_PAREN
+        ):
             self._advance()
             length = int(self._expect(TokenType.NUMBER).value)
             self._expect(TokenType.RIGHT_PAREN)
@@ -222,6 +236,13 @@ class SQLParser:
 
         return InsertStatement(table_name, columns, values)
 
+    def _parse_truncate(self) -> TruncateTableStatement:
+        """解析TRUNCATE TABLE语句"""
+        self._expect(TokenType.TRUNCATE)
+        self._expect(TokenType.TABLE)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        return TruncateTableStatement(table_name)
+
     def _parse_select(self) -> SelectStatement:
         """解析 SELECT 语句"""
         self._expect(TokenType.SELECT)
@@ -230,7 +251,13 @@ class SQLParser:
         columns = []
         while True:
             # 支持聚合函数
-            if self.current_token.type in (TokenType.COUNT, TokenType.SUM, TokenType.AVG, TokenType.MIN, TokenType.MAX):
+            if self.current_token.type in (
+                TokenType.COUNT,
+                TokenType.SUM,
+                TokenType.AVG,
+                TokenType.MIN,
+                TokenType.MAX,
+            ):
                 func_type = self.current_token.type
                 self._advance()
                 self._expect(TokenType.LEFT_PAREN)
@@ -266,7 +293,12 @@ class SQLParser:
         # 解析JOIN链
         join_clause = None
         left = from_table
-        while self.current_token and self.current_token.type in (TokenType.JOIN, TokenType.INNER, TokenType.LEFT, TokenType.RIGHT):
+        while self.current_token and self.current_token.type in (
+            TokenType.JOIN,
+            TokenType.INNER,
+            TokenType.LEFT,
+            TokenType.RIGHT,
+        ):
             # 解析JOIN类型
             if self.current_token.type == TokenType.INNER:
                 join_type = "INNER"
@@ -432,9 +464,13 @@ class SQLParser:
             self._advance()
             index_name = self._expect(TokenType.IDENTIFIER).value
             return DropIndexStatement(index_name)
+        elif self.current_token.type == TokenType.TABLE:
+            self._advance()
+            table_name = self._expect(TokenType.IDENTIFIER).value
+            return DropTableStatement(table_name)
         else:
             raise SyntaxError(
-                f"目前只支持DROP INDEX，但得到DROP {self.current_token.value}"
+                f"DROP语句支持INDEX或TABLE，但得到 {self.current_token.value}"
             )
 
     def _parse_update(self) -> UpdateStatement:

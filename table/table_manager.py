@@ -86,6 +86,43 @@ class TableManager:
 
         return deleted_count
 
+    def drop_table(self, table_name: str) -> bool:
+        """删除表"""
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            return False
+
+        # 删除所有表数据页面
+        pages = self.catalog.get_table_pages(table_name)
+        for page_id in pages:
+            # 这里应该释放页面，但由于当前实现中没有页面释放机制
+            # 所以只是清空页面内容
+            records = self.record_manager.get_records(page_id)
+            for i in range(len(records)):
+                self.record_manager.delete_record(page_id, i)
+
+        # 从系统目录中删除表
+        return self.catalog.drop_table(table_name)
+
+    def truncate_table(self, table_name: str) -> int:
+        """清空表数据，保留表结构"""
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+
+        # 统计要删除的记录数
+        record_count = self.count_records(table_name)
+
+        # 清空所有数据页面
+        pages = self.catalog.get_table_pages(table_name)
+        for page_id in pages:
+            records = self.record_manager.get_records(page_id)
+            # 从后往前删除，避免索引问题
+            for i in range(len(records) - 1, -1, -1):
+                self.record_manager.delete_record(page_id, i)
+
+        return record_count
+
     def update_records(
         self, table_name: str, updates: Dict[str, Any], condition_func=None
     ) -> int:

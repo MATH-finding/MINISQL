@@ -256,78 +256,90 @@ class SQLShell:
         """显示帮助信息"""
         print(
             """
-📚 MiniSQL 命令帮助
+    📚 MiniSQL 命令帮助
 
-📋 SQL语句:
-  CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
-  INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
-  SELECT columns FROM table_name [WHERE condition]     - 查询数据
-  UPDATE table_name SET col=val [WHERE ...]            - 更新数据
-  DELETE FROM table_name [WHERE ...]                   - 删除数据
-  BEGIN | START TRANSACTION                            - 开启事务
-  COMMIT                                               - 提交事务
-  ROLLBACK                                             - 回滚事务（当前未实现）
-  SET AUTOCOMMIT = 0|1                                 - 设置自动提交
-  SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
-  TRUNCATE TABLE table_name                            - 快速清空表数据
+    📋 SQL语句:
+    CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+    DROP TABLE table_name                                - 删除表（包括结构和数据）
+    INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
+    SELECT columns FROM table_name [WHERE condition]     - 查询数据
+    UPDATE table_name SET col=val [WHERE condition]      - 更新数据
+    DELETE FROM table_name [WHERE condition]             - 删除数据
+    TRUNCATE TABLE table_name                            - 快速清空表数据（保留结构）
+    
+    🔄 事务管理:
+    BEGIN | START TRANSACTION                            - 开启事务
+    COMMIT                                               - 提交事务
+    ROLLBACK                                             - 回滚事务（当前未实现）
+    SET AUTOCOMMIT = 0|1                                 - 设置自动提交
+    SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
 
-🧭 会话管理:
-  \\session list                                      - 列出会话
-  \\session new                                       - 新建会话
-  \\session use <id>                                  - 切换会话
-  UPDATE table_name SET col=value [WHERE condition]    - 更新数据
-  DELETE FROM table_name [WHERE condition]             - 删除数据
-  
-🔍 索引操作:
-  CREATE INDEX index_name ON table_name (column)       - 创建索引
-  CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
-  DROP INDEX index_name                                - 删除索引
-  
-📊 系统命令:
-  tables                     - 列出所有表
-  describe <table>           - 查看表结构 (可简写为 desc)
-  show <table>               - 查看表数据内容 (等同于 SELECT * FROM table)
-  indexes [table_name]       - 查看索引信息
-  stats                      - 显示数据库统计信息
-  
-📝 日志命令:
-  log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
-  log stats                  - 显示日志统计信息
-  cache stats                - 显示详细缓存统计信息
-  
-🛠️ 其他命令:
-  help, ?                    - 显示此帮助
-  clear                      - 清屏
-  quit, exit                 - 退出Shell
-  
-💡 数据类型:
-  INTEGER          整数
-  VARCHAR(n)       字符串，最大长度n
-  FLOAT            浮点数
-  BOOLEAN          布尔值 (TRUE/FALSE)
-  CHAR = "CHAR"         固定长度字符串
-  DECIMAL = "DECIMAL"   精确小数
-  DATE = "DATE"         日期类型
-  TIME = "TIME"         时间类型
-  DATETIME = "DATETIME" 日期时间类型
-  BIGINT = "BIGINT"     64位整数
-  TINYINT = "TINYINT"   8位整数
-  TEXT = "TEXT"         长文本  
+    🧭 会话管理:
+    \\session list                                       - 列出会话
+    \\session new                                        - 新建会话
+    \\session use <id>                                   - 切换会话
+    
+    🔍 索引操作:
+    CREATE INDEX index_name ON table_name (column)       - 创建索引
+    CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
+    DROP INDEX index_name                                - 删除索引
+    
+    📊 系统命令:
+    tables                     - 列出所有表
+    describe <table>           - 查看表结构 (可简写为 desc)
+    show <table>               - 查看表数据内容 (等同于 SELECT * FROM table)
+    indexes [table_name]       - 查看索引信息
+    stats                      - 显示数据库统计信息
+    
+    📝 日志命令:
+    log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+    log stats                  - 显示日志统计信息
+    cache stats                - 显示详细缓存统计信息
+    
+    🛠️ 其他命令:
+    help, ?                    - 显示此帮助
+    clear                      - 清屏
+    quit, exit                 - 退出Shell
+    
+    💡 数据类型:
+    INTEGER          整数
+    VARCHAR(n)       字符串，最大长度n
+    FLOAT            浮点数
+    BOOLEAN          布尔值 (TRUE/FALSE)
+    CHAR(n)          固定长度字符串
+    DECIMAL(p,s)     精确小数
+    DATE             日期类型
+    TIME             时间类型
+    DATETIME         日期时间类型
+    BIGINT           64位整数
+    TINYINT          8位整数
+    TEXT             长文本  
 
-🔒 约束:
-  PRIMARY KEY      主键
-  NOT NULL         非空
-  NULL            允许为空
+    🔒 约束:
+    PRIMARY KEY      主键
+    NOT NULL         非空
+    NULL             允许为空
+    UNIQUE           唯一值
+    DEFAULT value    默认值
+    CHECK (condition) 检查约束
+    FOREIGN KEY      外键
 
-💡 示例:
-  CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50));
-  INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
-  show users                           -- 查看表数据
-  UPDATE users SET name = 'NewName' WHERE id = 1;
-  DELETE FROM users WHERE id = 2;
-  CREATE INDEX idx_user_id ON users (id);
-  log level DEBUG                      -- 设置调试级别日志
-  cache stats                          -- 查看缓存详情
+    ⚠️ DROP vs TRUNCATE 对比:
+    DROP TABLE       - 完全删除表（结构+数据+索引），无法恢复
+    TRUNCATE TABLE   - 快速清空数据，保留表结构和索引定义
+    DELETE FROM      - 逐行删除数据，可加WHERE条件，相对较慢
+
+    💡 示例:
+    CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50) NOT NULL);
+    INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+    show users                           -- 查看表数据
+    UPDATE users SET name = 'NewName' WHERE id = 1;
+    DELETE FROM users WHERE id = 2;
+    TRUNCATE TABLE users;                -- 清空所有数据但保留表结构
+    DROP TABLE users;                    -- 完全删除表
+    CREATE INDEX idx_user_id ON users (id);
+    log level DEBUG                      -- 设置调试级别日志
+    cache stats                          -- 查看缓存详情
         """
         )
 

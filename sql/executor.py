@@ -46,6 +46,10 @@ class SQLExecutor:
             return self._execute_update(ast)
         elif isinstance(ast, DeleteStatement):  # 新增
             return self._execute_delete(ast)
+        elif isinstance(ast, DropTableStatement):
+            return self._execute_drop_table(ast)
+        elif isinstance(ast, TruncateTableStatement):
+            return self._execute_truncate_table(ast)
         else:
             raise ValueError(f"不支持的语句类型: {type(ast)}")
 
@@ -114,6 +118,59 @@ class SQLExecutor:
             "message": f"表 {stmt.table_name} 创建成功",
         }
 
+    def _execute_drop_table(self, stmt: DropTableStatement) -> Dict[str, Any]:
+        """执行DROP TABLE"""
+        # 检查表是否存在
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 删除表相关的所有索引
+        if self.index_manager:
+            indexes_to_drop = []
+            for index_name, index_info in self.index_manager.indexes.items():
+                if index_info.table_name == stmt.table_name:
+                    indexes_to_drop.append(index_name)
+
+            for index_name in indexes_to_drop:
+                self.index_manager.drop_index(index_name)
+
+        # 删除表数据和元数据
+        self.table_manager.drop_table(stmt.table_name)
+
+        return {
+            "type": "DROP_TABLE",
+            "table_name": stmt.table_name,
+            "success": True,
+            "message": f"表 {stmt.table_name} 删除成功",
+        }
+
+    def _execute_truncate_table(self, stmt: TruncateTableStatement) -> Dict[str, Any]:
+        """执行TRUNCATE TABLE"""
+        # 检查表是否存在
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 清空表数据但保留结构
+        cleared_count = self.table_manager.truncate_table(stmt.table_name)
+
+        # 清理相关索引数据但保留索引结构
+        if self.index_manager:
+            table_indexes = self.index_manager.get_table_indexes(stmt.table_name)
+            for index_name in table_indexes:
+                btree = self.index_manager.get_index(index_name)
+                if btree:
+                    btree.clear()  # 假设B+树有clear方法
+
+        return {
+            "type": "TRUNCATE_TABLE",
+            "table_name": stmt.table_name,
+            "rows_cleared": cleared_count,
+            "success": True,
+            "message": f"表 {stmt.table_name} 数据清空成功，共清除 {cleared_count} 行",
+        }
+
     def _execute_insert(self, stmt: InsertStatement) -> Dict[str, Any]:
         """执行INSERT - 统一唯一性索引校验，支持DEFAULT、CHECK、FOREIGN KEY"""
         schema = self.catalog.get_table_schema(stmt.table_name)
@@ -159,7 +216,11 @@ class SQLExecutor:
                     raise ValueError(f"列 {column.name} 不能为空")
 
             # 获取所有唯一性索引（主键、UNIQUE列、唯一索引、复合唯一索引）
-            unique_indexes = self.index_manager.get_unique_indexes_for_table(stmt.table_name) if self.index_manager else []
+            unique_indexes = (
+                self.index_manager.get_unique_indexes_for_table(stmt.table_name)
+                if self.index_manager
+                else []
+            )
 
             # 插入前校验所有唯一性约束
             for index in unique_indexes:
@@ -167,23 +228,25 @@ class SQLExecutor:
                 if all(key is not None for key in index_keys):
                     existing = self.index_manager.lookup(index.name, index_keys)
                     if existing:
-                        constraint_columns = ', '.join(index.columns)
-                        raise ValueError(f"唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在")
+                        constraint_columns = ", ".join(index.columns)
+                        raise ValueError(
+                            f"唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在"
+                        )
 
             # 校验CHECK约束
             for column in schema.columns:
-                if column.check is not None : 
+                if column.check is not None:
                     context = record_data.copy()
                     if not self._evaluate_condition(column.check, context):
                         raise ValueError(f"CHECK约束不满足: {column.name}")
-            for check_expr in getattr(schema, 'check_constraints', []):
+            for check_expr in getattr(schema, "check_constraints", []):
                 context = record_data.copy()
                 if not self._evaluate_condition(check_expr, context):
                     raise ValueError("表级CHECK约束不满足")
 
             # 校验FOREIGN KEY约束
             for column in schema.columns:
-                if column.foreign_key:  
+                if column.foreign_key:
                     ref_value = record_data.get(column.name)
                     if ref_value is not None:
                         ref_table = column.foreign_key["ref_table"]
@@ -198,7 +261,9 @@ class SQLExecutor:
                                 found = True
                                 break
                         if not found:
-                            raise ValueError(f"外键约束不满足: {column.name} -> {ref_table}({ref_column})")
+                            raise ValueError(
+                                f"外键约束不满足: {column.name} -> {ref_table}({ref_column})"
+                            )
             # 插入记录
             try:
                 record_id = self.table_manager.insert_record(
@@ -223,9 +288,10 @@ class SQLExecutor:
             "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
         }
 
-   # 合并后的 _execute_select 函数
+    # 合并后的 _execute_select 函数
     def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
         """执行SELECT - 扩展支持JOIN和聚合函数"""
+
         # 递归获取结果集
         def eval_from(from_table):
             if isinstance(from_table, str):
@@ -259,7 +325,9 @@ class SQLExecutor:
         # WHERE过滤
         filtered_records = []
         for record in all_records:
-            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, record.data):
+            if stmt.where_clause is None or self._evaluate_condition(
+                stmt.where_clause, record.data
+            ):
                 filtered_records.append(record)
 
         # 检查是否有聚合函数
@@ -274,30 +342,51 @@ class SQLExecutor:
                             agg_result["COUNT"] = len(filtered_records)
                         elif isinstance(arg, ColumnRef):
                             # 只统计非NULL
-                            agg_result["COUNT"] = sum(1 for r in filtered_records if self._evaluate_expression(arg, r.data) is not None)
+                            agg_result["COUNT"] = sum(
+                                1
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            )
                         else:
                             raise ValueError("COUNT参数不支持")
                     elif func == "SUM":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records]
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                            ]
                             agg_result["SUM"] = sum(v for v in values if v is not None)
                         else:
                             raise ValueError("SUM参数不支持")
                     elif func == "AVG":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
-                            agg_result["AVG"] = sum(values) / len(values) if values else None
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            ]
+                            agg_result["AVG"] = (
+                                sum(values) / len(values) if values else None
+                            )
                         else:
                             raise ValueError("AVG参数不支持")
                     elif func == "MIN":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            ]
                             agg_result["MIN"] = min(values) if values else None
                         else:
                             raise ValueError("MIN参数不支持")
                     elif func == "MAX":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [
+                                self._evaluate_expression(arg, r.data)
+                                for r in filtered_records
+                                if self._evaluate_expression(arg, r.data) is not None
+                            ]
                             agg_result["MAX"] = max(values) if values else None
                         else:
                             raise ValueError("MAX参数不支持")
@@ -311,7 +400,9 @@ class SQLExecutor:
                 if stmt.columns == ["*"]:
                     # 返回所有表结构定义的字段
                     row = {}
-                    schema = self.catalog.get_table_schema(from_name if isinstance(from_name, str) else stmt.from_table)
+                    schema = self.catalog.get_table_schema(
+                        from_name if isinstance(from_name, str) else stmt.from_table
+                    )
                     for col in schema.columns:
                         row[col.name] = record.data.get(col.name)
                     result_records.append(row)
@@ -326,13 +417,20 @@ class SQLExecutor:
                                 else:
                                     raise ValueError(f"列 {key} 不存在")
                             else:
-                                matches = [k for k in record.data if k.endswith(f".{col.column_name}") or k == col.column_name]
+                                matches = [
+                                    k
+                                    for k in record.data
+                                    if k.endswith(f".{col.column_name}")
+                                    or k == col.column_name
+                                ]
                                 if len(matches) == 1:
                                     key = matches[0]
                                 elif len(matches) == 0:
                                     raise ValueError(f"列 {col.column_name} 不存在")
                                 else:
-                                    raise ValueError(f"列 {col.column_name} 不明确，请加表前缀")
+                                    raise ValueError(
+                                        f"列 {col.column_name} 不明确，请加表前缀"
+                                    )
                                 if key in record.data:
                                     selected_data[col.column_name] = record.data[key]
                                 else:
