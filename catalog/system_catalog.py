@@ -50,6 +50,21 @@ class SystemCatalog:
             # 页面已存在，直接使用
             pass
 
+    def drop_table(self, table_name: str) -> bool:
+        """删除表的元数据"""
+        if table_name not in self.tables:
+            return False
+
+        # 从内存中删除表结构和页面信息
+        del self.tables[table_name]
+        if table_name in self.table_pages:
+            del self.table_pages[table_name]
+
+        # 保存目录更改
+        self._save_catalog()
+        print(f"表 {table_name} 的元数据删除成功")
+        return True
+
     def _save_catalog(self):
         """保存系统目录到磁盘"""
         catalog_data = {"tables": self.tables, "table_pages": self.table_pages}

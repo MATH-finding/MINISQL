@@ -78,9 +78,11 @@ class LogicalOp(Expression):
 
 class AggregateFunction(Expression):
     """聚合函数表达式，如COUNT(col), SUM(col)等"""
+
     def __init__(self, func_name: str, arg: Any):
         self.func_name = func_name.upper()
         self.arg = arg  # 可以是ColumnRef、'*'等
+
     def __repr__(self):
         return f"{self.func_name}({self.arg})"
 
@@ -89,13 +91,22 @@ class AggregateFunction(Expression):
 class CreateTableStatement(Statement):
     """CREATE TABLE 语句"""
 
-    def __init__(self, table_name: str, columns: List[Dict[str, Any]], table_constraints: List[dict] = None):
+    def __init__(
+        self,
+        table_name: str,
+        columns: List[Dict[str, Any]],
+        table_constraints: List[dict] = None,
+    ):
         self.table_name = table_name
-        self.columns = columns  # [{'name': str, 'type': str, 'length': int, 'constraints': [str]}]
+        self.columns = (
+            columns  # [{'name': str, 'type': str, 'length': int, 'constraints': [str]}]
+        )
         self.table_constraints = table_constraints or []
 
     def __repr__(self):
-        return f"CREATE TABLE {self.table_name} ({self.columns}, {self.table_constraints})"
+        return (
+            f"CREATE TABLE {self.table_name} ({self.columns}, {self.table_constraints})"
+        )
 
 
 class InsertStatement(Statement):
@@ -118,7 +129,7 @@ class SelectStatement(Statement):
     def __init__(
         self,
         columns: List[Union[ColumnRef, str]],
-        from_table: Union[str, 'JoinClause'],  # 修改为支持JoinClause
+        from_table: Union[str, "JoinClause"],  # 修改为支持JoinClause
         where_clause: Optional[Expression] = None,
     ):
         self.columns = columns  # 选择的列，'*' 表示所有列
@@ -189,7 +200,10 @@ class JoinClause(ASTNode):
     join_type: 连接类型（如'INNER', 'LEFT'等）
     on: 连接条件（Expression）
     """
-    def __init__(self, left: Union[str, 'JoinClause'], right: str, join_type: str, on: Expression):
+
+    def __init__(
+        self, left: Union[str, "JoinClause"], right: str, join_type: str, on: Expression
+    ):
         self.left = left
         self.right = right
         self.join_type = join_type  # 'INNER', 'LEFT', ...
@@ -197,7 +211,8 @@ class JoinClause(ASTNode):
 
     def __repr__(self):
         return f"({self.left} {self.join_type} JOIN {self.right} ON {self.on})"
-        
+
+
 class UpdateStatement(Statement):
     """UPDATE 语句"""
 
@@ -233,6 +248,26 @@ class DeleteStatement(Statement):
         if self.where_clause:
             result += f" WHERE {self.where_clause}"
         return result
+
+
+class DropTableStatement(Statement):
+    """DROP TABLE 语句"""
+
+    def __init__(self, table_name: str):
+        self.table_name = table_name
+
+    def __repr__(self):
+        return f"DROP TABLE {self.table_name}"
+
+
+class TruncateTableStatement(Statement):
+    """TRUNCATE TABLE 语句"""
+
+    def __init__(self, table_name: str):
+        self.table_name = table_name
+
+    def __repr__(self):
+        return f"TRUNCATE TABLE {self.table_name}"
 
 
 class CreateViewStatement(Statement):
