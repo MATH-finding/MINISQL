@@ -72,6 +72,8 @@ class TokenType(Enum):
     REPEATABLE = "REPEATABLE"
     SERIALIZABLE = "SERIALIZABLE"
     TRUNCATE = "TRUNCATE"
+    VIEW = "VIEW"
+    AS = "AS"
 
     # 布尔值
     TRUE = "TRUE"
@@ -175,6 +177,8 @@ class SQLLexer:
         "REPEATABLE": TokenType.REPEATABLE,
         "SERIALIZABLE": TokenType.SERIALIZABLE,
         "TRUNCATE": TokenType.TRUNCATE,
+        "VIEW": TokenType.VIEW,
+        "AS": TokenType.AS,
     }
 
     def __init__(self, sql: str):
@@ -186,6 +190,8 @@ class SQLLexer:
 
     def tokenize(self) -> List[Token]:
         """将SQL文本分解为Token列表"""
+        # DEBUG: 记录tokenize开始
+        # print(f"[LEXER DEBUG] tokenize start: sql={self.sql}")
         while self.position < len(self.sql):
             self._skip_whitespace()
 
@@ -226,6 +232,12 @@ class SQLLexer:
                 )
 
         self._add_token(TokenType.EOF, "")
+        # DEBUG: 记录tokenize结束与tokens
+        # try:
+        #     token_summary = [(t.type.name, t.value) for t in self.tokens]
+        # except Exception:
+        #     token_summary = [str(t) for t in self.tokens]
+        # print(f"[LEXER DEBUG] tokenize end: tokens={token_summary}")
         return self.tokens
 
     def _skip_whitespace(self):
@@ -291,6 +303,7 @@ class SQLLexer:
 
     def _read_string(self, quote_char: str):
         """读取字符串字面量"""
+        # print(f"[LEXER DEBUG] _read_string called with quote_char={quote_char} at pos={self.position}, line={self.line}, col={self.column}")
         start_column = self.column
         self.position += 1  # 跳过开始引号
         self.column += 1
@@ -303,6 +316,7 @@ class SQLLexer:
                 # 结束引号
                 self.position += 1
                 self.column += 1
+                # print(f"[LEXER DEBUG] _read_string finished, value='{value}'")
                 token = Token(TokenType.STRING, value, self.line, start_column)
                 self.tokens.append(token)
                 return

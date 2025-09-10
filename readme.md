@@ -160,3 +160,20 @@ bash
 复制
 # 只需要Python 3.7+，无额外依赖
 python --version  
+
+## 快速开始
+```bash
+python main.py           # 启动交互式 Shell
+python test_btree_standalone   # 运行综合测试脚本
+```
+
+## Shell 小贴士（视图相关）
+- 列出视图：`views` 或 `show views`
+- 查看视图定义：`describe view <name>` 或 `show view <name>`
+- 创建视图：`CREATE VIEW v AS <select>`
+- 删除视图：`DROP VIEW v`
+- 支持嵌套视图：在视图上再次创建视图，并可继续使用 WHERE/投影
+
+## 常见问题（Troubleshooting）
+- 使用视图定义中的字符串字面量（例如 `name = 'Alice'`）时，请确保字面量使用引号。
+- 若创建视图后查询返回空，请检查嵌套视图的 WHERE 条件是否与列名一致，以及字面量是否被正确引号包裹。

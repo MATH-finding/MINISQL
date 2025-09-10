@@ -10,6 +10,7 @@ from table import TableManager
 from .ast_nodes import *
 
 
+
 class SQLExecutor:
     """SQL执行器，将AST转换为数据库操作"""
 
@@ -32,22 +33,78 @@ class SQLExecutor:
 
     def execute(self, ast: Statement) -> Dict[str, Any]:
         """执行SQL语句"""
-        if isinstance(ast, CreateTableStatement):
-            return self._execute_create_table(ast)
-        elif isinstance(ast, InsertStatement):
-            return self._execute_insert(ast)
-        elif isinstance(ast, SelectStatement):
-            return self._execute_select(ast)
-        elif isinstance(ast, CreateIndexStatement):
-            return self._execute_create_index(ast)
-        elif isinstance(ast, DropIndexStatement):
-            return self._execute_drop_index(ast)
-        elif isinstance(ast, UpdateStatement):  # 新增
-            return self._execute_update(ast)
-        elif isinstance(ast, DeleteStatement):  # 新增
-            return self._execute_delete(ast)
-        else:
-            raise ValueError(f"不支持的语句类型: {type(ast)}")
+        try:
+            # DEBUG: 打印进入execute的AST类型
+            # print(f"[EXECUTOR DEBUG] execute() with AST: {type(ast).__name__}")
+            if isinstance(ast, CreateTableStatement):
+                return self._execute_create_table(ast)
+            elif isinstance(ast, InsertStatement):
+                return self._execute_insert(ast)
+            elif isinstance(ast, SelectStatement):
+                # 查询视图重写
+                if isinstance(ast.from_table, str) and ast.from_table.lower() in self.catalog.views:
+                    # print(f"[EXECUTOR DEBUG] SELECT on view detected: view={ast.from_table}")
+                    view_sql = self.catalog.get_view_definition(ast.from_table.lower())
+                    # print(f"[EXECUTOR DEBUG] view SQL: {view_sql}")
+                    from sql.lexer import SQLLexer
+                    from sql.parser import SQLParser
+                    lexer = SQLLexer(view_sql)
+                    tokens = lexer.tokenize()
+                    parser = SQLParser(tokens)
+                    view_ast = parser.parse()
+                    # print(f"[EXECUTOR DEBUG] parsed view AST: {type(view_ast).__name__} -> {view_ast}")
+
+                    # 步骤 1: 执行视图定义，得到原始结果（list of dict）
+                    view_result = self.execute(view_ast)
+                    # print(f"[EXECUTOR DEBUG] view execution result meta: success={view_result.get('success')}, rows={len(view_result.get('data', []) ) if isinstance(view_result.get('data'), list) else 'N/A'}")
+                    if not view_result.get("success") or not isinstance(view_result.get("data"), list):
+                        return view_result
+                    current_rows = view_result["data"]
+
+                    # 步骤 2: 应用外部WHERE过滤
+                    if ast.where_clause:
+                        # print(f"[EXECUTOR DEBUG] applying outer WHERE on {len(current_rows)} rows: {ast.where_clause}")
+                        current_rows = [row for row in current_rows if self._evaluate_condition(ast.where_clause, row)]
+                        # print(f"[EXECUTOR DEBUG] rows after WHERE: {len(current_rows)}")
+
+                    # 步骤 3: 投影
+                    final_data = []
+                    columns_to_project = view_ast.columns if ast.columns == ["*"] else ast.columns
+                    is_select_all = (columns_to_project == ["*"])
+                    # print(f"[EXECUTOR DEBUG] projection columns: {columns_to_project}")
+                    for row in current_rows:
+                        if is_select_all:
+                            proj = dict(row)
+                        else:
+                            proj = {}
+                            for col in columns_to_project:
+                                if isinstance(col, ColumnRef):
+                                    col_name = col.column_name
+                                else:
+                                    col_name = str(col)
+                                if col_name in row:
+                                    proj[col_name] = row[col_name]
+                        final_data.append(proj)
+                    # print(f"[EXECUTOR DEBUG] final projected rows: {len(final_data)}")
+                    return {"type": "SELECT", "success": True, "data": final_data, "message": f"查询成功，返回{len(final_data)}行"}
+                return self._execute_select(ast)
+            elif isinstance(ast, CreateIndexStatement):
+                return self._execute_create_index(ast)
+            elif isinstance(ast, DropIndexStatement):
+                return self._execute_drop_index(ast)
+            elif isinstance(ast, CreateViewStatement):
+                return self._execute_create_view(ast)
+            elif isinstance(ast, DropViewStatement):
+                return self._execute_drop_view(ast)
+            elif isinstance(ast, UpdateStatement):
+                return self._execute_update(ast)
+            elif isinstance(ast, DeleteStatement):
+                return self._execute_delete(ast)
+            else:
+                raise ValueError(f"不支持的语句类型: {type(ast)}")
+        except Exception as e:
+            # 统一异常返回结构，避免KeyError
+            return {"success": False, "error": str(e), "data": None, "message": f"SQL执行失败: {str(e)}"}
 
     def _execute_create_table(self, stmt: CreateTableStatement) -> Dict[str, Any]:
         """执行CREATE TABLE"""
@@ -223,7 +280,6 @@ class SQLExecutor:
             "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
         }
 
-   # 合并后的 _execute_select 函数
     def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
         """执行SELECT - 扩展支持JOIN和聚合函数"""
         # 递归获取结果集
@@ -233,6 +289,7 @@ class SQLExecutor:
                 schema = self.catalog.get_table_schema(from_table)
                 if not schema:
                     raise ValueError(f"表 {from_table} 不存在")
+                # 返回Record对象和表名
                 return self.table_manager.scan_table(from_table), from_table
             elif isinstance(from_table, JoinClause):
                 # JOIN
@@ -255,12 +312,22 @@ class SQLExecutor:
                 raise ValueError("未知的from_table类型")
 
         all_records, from_name = eval_from(stmt.from_table)
+        # print(f"[EXECUTOR DEBUG] _execute_select: source={from_name}, rows_scanned={len(all_records)}")
 
         # WHERE过滤
         filtered_records = []
         for record in all_records:
-            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, record.data):
+            # 单表：record.data的key是裸字段名
+            # JOIN：record.data的key是带前缀
+            context = record.data.copy()
+            # 对于单表，去除所有表前缀（兼容视图嵌套）
+            if isinstance(stmt.from_table, str):
+                context = {k.split(".")[-1]: v for k, v in context.items()}
+            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, context):
+                # 只保留过滤后的context，便于后续投影
+                record._filtered_context = context
                 filtered_records.append(record)
+        # print(f"[EXECUTOR DEBUG] _execute_select: rows_after_where={len(filtered_records)}")
 
         # 检查是否有聚合函数
         if any(isinstance(col, AggregateFunction) for col in stmt.columns):
@@ -273,31 +340,30 @@ class SQLExecutor:
                         if arg == "*":
                             agg_result["COUNT"] = len(filtered_records)
                         elif isinstance(arg, ColumnRef):
-                            # 只统计非NULL
-                            agg_result["COUNT"] = sum(1 for r in filtered_records if self._evaluate_expression(arg, r.data) is not None)
+                            agg_result["COUNT"] = sum(1 for r in filtered_records if self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) is not None)
                         else:
                             raise ValueError("COUNT参数不支持")
                     elif func == "SUM":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records]
+                            values = [self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) for r in filtered_records]
                             agg_result["SUM"] = sum(v for v in values if v is not None)
                         else:
                             raise ValueError("SUM参数不支持")
                     elif func == "AVG":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) for r in filtered_records if self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) is not None]
                             agg_result["AVG"] = sum(values) / len(values) if values else None
                         else:
                             raise ValueError("AVG参数不支持")
                     elif func == "MIN":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) for r in filtered_records if self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) is not None]
                             agg_result["MIN"] = min(values) if values else None
                         else:
                             raise ValueError("MIN参数不支持")
                     elif func == "MAX":
                         if isinstance(arg, ColumnRef):
-                            values = [self._evaluate_expression(arg, r.data) for r in filtered_records if self._evaluate_expression(arg, r.data) is not None]
+                            values = [self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) for r in filtered_records if self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data)) is not None]
                             agg_result["MAX"] = max(values) if values else None
                         else:
                             raise ValueError("MAX参数不支持")
@@ -308,53 +374,50 @@ class SQLExecutor:
             # 选择列
             result_records = []
             for record in filtered_records:
+                context = getattr(record, '_filtered_context', record.data)
                 if stmt.columns == ["*"]:
-                    # 返回所有表结构定义的字段
-                    row = {}
-                    schema = self.catalog.get_table_schema(from_name if isinstance(from_name, str) else stmt.from_table)
-                    for col in schema.columns:
-                        row[col.name] = record.data.get(col.name)
+                    row = dict(context)
                     result_records.append(row)
                 else:
                     selected_data = {}
                     for col in stmt.columns:
                         if isinstance(col, ColumnRef):
-                            if col.table_name:
-                                key = f"{col.table_name}.{col.column_name}"
-                                if key in record.data:
-                                    selected_data[col.column_name] = record.data[key]
-                                else:
-                                    raise ValueError(f"列 {key} 不存在")
+                            col_name = col.column_name
+                            if col_name in context:
+                                selected_data[col_name] = context[col_name]
                             else:
-                                matches = [k for k in record.data if k.endswith(f".{col.column_name}") or k == col.column_name]
+                                # 兼容JOIN的前缀
+                                matches = [k for k in context if k.endswith(f".{col_name}") or k == col_name]
                                 if len(matches) == 1:
-                                    key = matches[0]
+                                    selected_data[col_name] = context[matches[0]]
                                 elif len(matches) == 0:
-                                    raise ValueError(f"列 {col.column_name} 不存在")
+                                    raise ValueError(f"列 {col_name} 不存在")
                                 else:
-                                    raise ValueError(f"列 {col.column_name} 不明确，请加表前缀")
-                                if key in record.data:
-                                    selected_data[col.column_name] = record.data[key]
-                                else:
-                                    raise ValueError(f"列 {key} 不存在")
+                                    raise ValueError(f"列 {col_name} 不明确，请加表前缀")
                         elif isinstance(col, AggregateFunction):
-                            # 聚合函数在非聚合上下文不支持
                             raise ValueError("聚合函数只能单独出现在SELECT列表中")
                         else:
-                            if col in record.data:
-                                selected_data[col] = record.data[col]
+                            if col in context:
+                                selected_data[col] = context[col]
                             else:
                                 raise ValueError(f"列 {col} 不存在")
                     result_records.append(selected_data)
+        # print(f"[EXECUTOR DEBUG] _execute_select: rows_projected={len(result_records)}")
 
         return {
             "type": "SELECT",
-            "table_name": from_name,
-            "rows_returned": len(result_records),
-            "data": result_records,
             "success": True,
-            "message": f"查询返回 {len(result_records)} 行",
+            "data": result_records,
+            "message": f"查询成功，返回{len(result_records)}行"
         }
+
+    def _execute_create_view(self, stmt):
+        self.catalog.create_view(stmt.view_name, stmt.view_definition)
+        return {"type": "CREATE_VIEW", "view_name": stmt.view_name, "success": True, "message": f"视图 {stmt.view_name} 创建成功"}
+
+    def _execute_drop_view(self, stmt):
+        self.catalog.drop_view(stmt.view_name)
+        return {"type": "DROP_VIEW", "view_name": stmt.view_name, "success": True, "message": f"视图 {stmt.view_name} 删除成功"}
 
     def _execute_create_index(self, stmt: CreateIndexStatement) -> Dict[str, Any]:
         """执行CREATE INDEX"""
@@ -420,7 +483,7 @@ class SQLExecutor:
             if column_name in record.data:
                 key = record.data[column_name]
                 btree.insert(key, record_id)  # 存储正确的记录ID
-                print(f"DEBUG: 构建索引 {index_name}: {key} -> {record_id}")
+                # print(f"DEBUG: 构建索引 {index_name}: {key} -> {record_id}")
 
     def _try_index_scan(
         self, table_name: str, where_clause: Expression
@@ -438,12 +501,12 @@ class SQLExecutor:
         if not btree:
             return None
 
-        print(f"DEBUG: 使用索引 {index_name} 查找 {column_name} {operator} {value}")
+        # print(f"DEBUG: 使用索引 {index_name} 查找 {column_name} {operator} {value}")
 
         if operator == "=":
             # 精确查找
             record_id = btree.search(value)
-            print(f"DEBUG: 索引搜索结果: {record_id}")
+            # print(f"DEBUG: 索引搜索结果: {record_id}")
 
             if record_id is not None:
                 if isinstance(record_id, (list, tuple)):
@@ -501,20 +564,26 @@ class SQLExecutor:
                     f"DEBUG: 记录ID {record_id} 超出范围，总记录数: {len(all_records)}"
                 )
 
-        print(f"DEBUG: 根据ID获取到 {len(result)} 条记录")
+        # print(f"DEBUG: 根据ID获取到 {len(result)} 条记录")
         return result
 
     def _evaluate_expression(self, expr: Expression, context: Dict[str, Any]) -> Any:
         if isinstance(expr, Literal):
             return expr.value
         elif isinstance(expr, ColumnRef):
+            # 优先查找带前缀
             if expr.table_name:
-                # 优先查找带前缀
                 key = f"{expr.table_name}.{expr.column_name}"
                 if key in context:
                     return context[key]
             # 回退查找无前缀
-            return context.get(expr.column_name)
+            if expr.column_name in context:
+                return context[expr.column_name]
+            # 兼容：如果context只有一个key且key结尾是.column_name，也允许
+            matches = [v for k, v in context.items() if k.endswith(f".{expr.column_name}")]
+            if len(matches) == 1:
+                return matches[0]
+            return None
         else:
             raise ValueError(f"不支持的表达式类型: {type(expr)}")
 
@@ -523,6 +592,14 @@ class SQLExecutor:
     ) -> bool:
         """评估WHERE条件"""
         if isinstance(condition, BinaryOp):
+            # # --- 在这里加入调试代码 ---
+            # # print(f"DEBUG: [Evaluating Condition] on data: {record_data}")
+            # left_val = self._evaluate_expression(condition.left, record_data)
+            # right_val = self._evaluate_expression(condition.right, record_data)
+            # result = self.comparison_ops.get(condition.operator)(left_val, right_val)
+            # # print(f"DEBUG: [Comparison] '{left_val}' {condition.operator} '{right_val}' -> {result}")
+            # # --- 调试代码结束 ---
+           
             left_val = self._evaluate_expression(condition.left, record_data)
             right_val = self._evaluate_expression(condition.right, record_data)
 

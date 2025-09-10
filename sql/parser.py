@@ -7,6 +7,7 @@ from sql import Token, TokenType
 from .ast_nodes import *
 
 
+
 class SQLParser:
     """SQL语法分析器"""
 
@@ -17,19 +18,35 @@ class SQLParser:
 
     def parse(self) -> Statement:
         """解析SQL语句"""
+        # DEBUG: 入口日志
+        # print(f"[PARSER DEBUG] parse() entry, current_token={self.current_token}")
         if not self.current_token or self.current_token.type == TokenType.EOF:
             raise SyntaxError("空的SQL语句")
         if self.current_token.type == TokenType.CREATE:
-            return self._parse_create_statement()  # 改为这个新方法
+            # CREATE VIEW
+            if self._peek_token_type(1) == TokenType.VIEW:
+                # print("[PARSER DEBUG] dispatching to _parse_create_view")
+                return self._parse_create_view()
+            # print("[PARSER DEBUG] dispatching to _parse_create_statement")
+            return self._parse_create_statement()
         elif self.current_token.type == TokenType.DROP:
-            return self._parse_drop_statement()  # 添加DROP支持
+            # DROP VIEW
+            if self._peek_token_type(1) == TokenType.VIEW:
+                # print("[PARSER DEBUG] dispatching to _parse_drop_view")
+                return self._parse_drop_view()
+            # print("[PARSER DEBUG] dispatching to _parse_drop_statement")
+            return self._parse_drop_statement()
         elif self.current_token.type == TokenType.INSERT:
+            # print("[PARSER DEBUG] dispatching to _parse_insert")
             return self._parse_insert()
         elif self.current_token.type == TokenType.SELECT:
+            # print("[PARSER DEBUG] dispatching to _parse_select")
             return self._parse_select()
         elif self.current_token.type == TokenType.UPDATE:  # 新增
+            # print("[PARSER DEBUG] dispatching to _parse_update")
             return self._parse_update()
         elif self.current_token.type == TokenType.DELETE:  # 新增
+            # print("[PARSER DEBUG] dispatching to _parse_delete")
             return self._parse_delete()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
@@ -296,6 +313,12 @@ class SQLParser:
             self._advance()
             where_clause = self._parse_where_expression()
 
+        # DEBUG: 打印SELECT解析结果摘要
+        try:
+            cols_repr = ", ".join(str(c) for c in columns)
+        except Exception:
+            cols_repr = str(columns)
+        # print(f"[PARSER DEBUG] SELECT parsed: columns=[{cols_repr}], from={left}, where={where_clause}")
         return SelectStatement(columns, left, where_clause)
 
     def _parse_where_expression(self) -> Expression:
@@ -347,6 +370,11 @@ class SQLParser:
 
     def _parse_expression(self) -> Expression:
         """解析基本表达式"""
+        # --- 在这里加入唯一的调试代码 ---
+        # print(f"DEBUG: [Parser._parse_expression] received token: {self.current_token}")
+        # --- 调试代码结束 ---
+
+
         if self.current_token.type == TokenType.IDENTIFIER:
             column_name = self.current_token.value
             self._advance()
@@ -370,7 +398,7 @@ class SQLParser:
                 return Literal(int(value), "INTEGER")
 
         elif self.current_token.type == TokenType.STRING:
-            value = self.current_token.value
+            value = self.current_token.value.strip("'")
             self._advance()
             return Literal(value, "STRING")
 
@@ -485,3 +513,36 @@ class SQLParser:
             where_clause = self._parse_where_expression()  # 使用现有的WHERE解析方法
 
         return DeleteStatement(table_name, where_clause)
+
+    def _peek_token_type(self, offset):
+        pos = self.position + offset
+        if 0 <= pos < len(self.tokens):
+            return self.tokens[pos].type
+        return None
+
+    def _parse_create_view(self) -> CreateViewStatement:
+        self._expect(TokenType.CREATE)
+        self._expect(TokenType.VIEW)
+        view_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.AS)
+        # 视图定义为剩余SQL（为STRING类型token补回引号，避免字面量丢失）
+        definition_tokens = self.tokens[self.position:]
+        parts = []
+        for token in definition_tokens:
+            if token.type == TokenType.EOF:
+                continue
+            if token.type == TokenType.STRING:
+                # 恢复字符串字面量引号；简单转义单引号为SQL内用法
+                parts.append("'" + token.value.replace("'", "''") + "'")
+            else:
+                parts.append(token.value)
+        view_definition = " ".join(parts)
+        # DEBUG: 打印视图定义
+        # print(f"[PARSER DEBUG] CREATE VIEW parsed: name={view_name}, definition=\"{view_definition}\"")
+        return CreateViewStatement(view_name, view_definition)
+
+    def _parse_drop_view(self) -> DropViewStatement:
+        self._expect(TokenType.DROP)
+        self._expect(TokenType.VIEW)
+        view_name = self._expect(TokenType.IDENTIFIER).value
+        return DropViewStatement(view_name)

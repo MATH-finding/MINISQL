@@ -15,6 +15,8 @@ class SystemCatalog:
         self.tables: Dict[str, TableSchema] = {}
         self.table_pages: Dict[str, List[int]] = {}  # 表名 -> 页面列表
         self.catalog_page_id = 0  # 系统目录页面
+        # 视图元数据：view_name -> view_definition
+        self.views = {}  # 内存实现，生产环境可用表实现
         self._load_catalog()
 
     def _load_catalog(self):
@@ -105,3 +107,18 @@ class SystemCatalog:
     def get_table_pages(self, table_name: str) -> List[int]:
         """获取表的所有页面"""
         return self.table_pages.get(table_name, [])
+
+    def create_view(self, view_name, view_definition):
+        if view_name in self.views:
+            raise ValueError(f"视图 {view_name} 已存在")
+        self.views[view_name] = view_definition
+
+    def drop_view(self, view_name):
+        if view_name not in self.views:
+            raise ValueError(f"视图 {view_name} 不存在")
+        del self.views[view_name]
+
+    def get_view_definition(self, view_name):
+        if view_name not in self.views:
+            raise ValueError(f"视图 {view_name} 不存在")
+        return self.views[view_name]

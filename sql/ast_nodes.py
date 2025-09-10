@@ -31,6 +31,7 @@ class ColumnRef(Expression):
     def __init__(self, column_name: str, table_name: str = None):
         self.column_name = column_name
         self.table_name = table_name
+        # print(f"[AST DEBUG] ColumnRef created: column_name={column_name}, table_name={table_name}")
 
     def __repr__(self):
         if self.table_name:
@@ -44,6 +45,7 @@ class Literal(Expression):
     def __init__(self, value: Any, data_type: str):
         self.value = value
         self.data_type = data_type  # 'INTEGER', 'STRING', 'FLOAT', 'BOOLEAN', 'NULL'
+        # # print(f"[AST DEBUG] Literal created: value={value}, data_type={data_type}")
 
     def __repr__(self):
         return f"{self.value}({self.data_type})"
@@ -56,6 +58,7 @@ class BinaryOp(Expression):
         self.left = left
         self.operator = operator
         self.right = right
+        # # print(f"[AST DEBUG] BinaryOp created: left={left}, operator={operator}, right={right}")
 
     def __repr__(self):
         return f"({self.left} {self.operator} {self.right})"
@@ -121,6 +124,7 @@ class SelectStatement(Statement):
         self.columns = columns  # 选择的列，'*' 表示所有列
         self.from_table = from_table  # 表名或JoinClause
         self.where_clause = where_clause  # WHERE条件
+        # print(f"[AST DEBUG] SelectStatement created: columns={columns}, from_table={from_table}, where_clause={where_clause}")
 
     def __repr__(self):
         cols = ", ".join(str(col) for col in self.columns)
@@ -229,3 +233,15 @@ class DeleteStatement(Statement):
         if self.where_clause:
             result += f" WHERE {self.where_clause}"
         return result
+
+
+class CreateViewStatement(Statement):
+    def __init__(self, view_name: str, view_definition: str):
+        self.view_name = view_name
+        self.view_definition = view_definition
+        # print(f"[AST DEBUG] CreateViewStatement created: view_name={view_name}, definition=\"{view_definition}\"")
+
+class DropViewStatement(Statement):
+    def __init__(self, view_name: str):
+        self.view_name = view_name
+        # print(f"[AST DEBUG] DropViewStatement created: view_name={view_name}")

@@ -73,6 +73,45 @@ class SQLShell:
         if not command:
             return
 
+        # 新增：显示所有视图
+        if command.lower() in ("views", "show views"):
+            views = self.database.list_views() if hasattr(self.database, "list_views") else []
+            if not views:
+                print("数据库中没有视图")
+            else:
+                print(f"数据库中的视图 ({len(views)} 个):")
+                for view in views:
+                    print(f"  👁️  {view}")
+            return
+
+        # 新增：显示视图定义
+        if command.lower().startswith("describe view "):
+            view_name = command.split()[2]
+            if hasattr(self.database, "get_view_definition"):
+                definition = self.database.get_view_definition(view_name)
+                if definition:
+                    print(f"视图 '{view_name}' 的定义: {definition}")
+                else:
+                    print(f"视图 '{view_name}' 不存在")
+            else:
+                print("当前数据库不支持视图定义查询")
+            return
+
+        # 新增：别名 - show view <name> （与 describe view 等价）
+        if command.lower().startswith("show view "):
+            parts = command.split()
+            if len(parts) >= 3:
+                alias = f"describe view {parts[2]}"
+                self._process_command(alias)
+                return
+
+        # 新增：删除视图
+        if command.lower().startswith("drop view "):
+            view_name = command.split()[2]
+            result = self.database.execute_sql(f"DROP VIEW {view_name}")
+            format_query_result(result)
+            return
+
         # 会话管理命令（以反斜杠开头）
         if command.startswith("\\session"):
             parts = command.split()
@@ -118,6 +157,14 @@ class SQLShell:
             self._show_help()
             return
 
+        # 新增：帮助子命令，不影响原有 help
+        if command.lower() == "help sql":
+            self._show_help_sql()
+            return
+        if command.lower() == "help views":
+            self._show_help_views()
+            return
+
         if command.lower() == "tables":
             self._show_tables()
             return
@@ -147,6 +194,14 @@ class SQLShell:
             self._show_stats()
             return
 
+        # 新增：视图与约束演示命令
+        if command.lower() == "demo views":
+            self._demo_views()
+            return
+        if command.lower() == "demo constraints":
+            self._demo_constraints()
+            return
+
         # 新增：日志相关命令
         if command.lower().startswith("log level "):
             level = command.split()[2] if len(command.split()) > 2 else ""
@@ -172,8 +227,12 @@ class SQLShell:
         print()  # 空行
         result = self.database.execute_sql(command)
         format_query_result(result)
+        # 新增：调试信息输出
+        if "DEBUG" in result.get("message", "") or "debug" in result.get("message", "").lower():
+            print("[调试信息]", result.get("message"))
+        print()  # 空行
 
-        # 对于修改数据的操作，事务中或 autocommit=0 时不强制保存
+        # 对于修改数据的操作，事务中或 autocommit=0 时不强制保存（保持原逻辑）
         upper = command.upper()
         if upper.startswith(("CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
             try:
@@ -185,7 +244,7 @@ class SQLShell:
                 autocommit = True
             if autocommit and not in_txn:
                 self.database.flush_all()
-        # 对于所有可能修改数据的操作，都强制保存
+        # 对于所有可能修改数据的操作，都强制保存（保留原逻辑）
         if any(
             command.upper().startswith(cmd)
             for cmd in ["CREATE", "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE"]
@@ -209,6 +268,241 @@ class SQLShell:
                 print(f"❌ 错误: {result.get('message', '未知错误')}")
         except Exception as e:
             print(f"❌ 查询表数据时出错: {e}")
+
+    # 新增：SQL 帮助
+    def _show_help_sql(self):
+        print(
+            """
+            📋 SQL语句:
+            CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+            INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
+            SELECT columns FROM table_name [WHERE condition]     - 查询数据
+            [JOIN ... ON ...]、聚合 COUNT/SUM/AVG/MIN/MAX        - 进阶查询
+            UPDATE table_name SET col=val [WHERE ...]            - 更新数据
+            DELETE FROM table_name [WHERE ...]                   - 删除数据
+            CREATE INDEX idx ON table (column)                   - 创建索引
+            CREATE UNIQUE INDEX idx ON table (column)            - 创建唯一索引
+            DROP INDEX idx                                       - 删除索引
+            CREATE VIEW v AS <select>                            - 创建视图
+            DROP VIEW v                                          - 删除视图
+            """
+        )
+
+    # 新增：视图命令帮助
+    def _show_help_views(self):
+        print(
+            """
+            👁️ 视图命令:
+            views | show views           - 列出所有视图
+            describe view <name>         - 查看视图定义
+            show view <name>             - 别名，与上等价
+            CREATE VIEW v AS <select>    - 创建视图
+            DROP VIEW v                  - 删除视图
+            示例:
+            CREATE VIEW adult AS SELECT id, name FROM users WHERE age >= 18;
+            CREATE VIEW alice AS SELECT * FROM adult WHERE name = 'Alice';
+            SELECT * FROM alice;
+            """
+        )
+
+    # 新增：演示 - 视图
+    def _demo_views(self):
+        print("\n=== DEMO: 视图与嵌套视图 ===")
+        # 预清理：尽力删除视图并清空用户表（在不支持 DROP TABLE 的环境）
+        preclean = [
+            "DROP VIEW alice_only",
+            "DROP VIEW adult_users",
+            "DELETE FROM users",
+        ]
+         # 调试：列出当前表
+        try:
+            if hasattr(self.database, "list_tables"):
+                tbls = self.database.list_tables() or []
+                print(f"[DEMO DEBUG] 预清理前的表: {tbls}")
+        except Exception as e:
+            print(f"[DEMO DEBUG] 列表表失败: {e}")
+        for sql in preclean:
+            try:
+                res0 = self.database.execute_sql(sql)
+                print(f"SQL> {sql}")
+                format_query_result(res0)
+            except Exception as e:
+                print(f"SQL> {sql}")
+                print(f"    预期或可忽略错误: {e}")
+        # 额外：若接口支持列表表名，则在存在 users 表时再尝试清空一次
+        try:
+            if hasattr(self.database, "list_tables"):
+                tables = self.database.list_tables() or []
+                if any(t.lower() == "users" for t in tables):
+                    sql = "DELETE FROM users"
+                    resx = self.database.execute_sql(sql)
+                    print(f"SQL> {sql}")
+                    format_query_result(resx)
+                    
+                    # 调试：再验计数
+                    try:
+                        chk2 = self.database.execute_sql("SELECT COUNT(*) FROM users")
+                        print("SQL> SELECT COUNT(*) FROM users")
+                        format_query_result(chk2)
+                    except Exception as e:
+                        print(f"[DEMO DEBUG] 二次计数失败(可忽略): {e}")
+
+        except Exception as e:
+            print("    预清理(users)检查失败，可忽略:", e)
+        
+        steps = [
+            "DROP VIEW alice_only",
+            "DROP VIEW adult_users",
+            "DROP TABLE users",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+            "INSERT INTO users VALUES (1, 'Alice', 20)",
+            "INSERT INTO users VALUES (2, 'Bob', 17)",
+            "INSERT INTO users VALUES (3, 'Carol', 25)",
+            "CREATE VIEW adult_users AS SELECT id, name FROM users WHERE age >= 18",
+            "SELECT * FROM adult_users",
+            "CREATE VIEW alice_only AS SELECT * FROM adult_users WHERE name = 'Alice'",
+            "SELECT * FROM alice_only",
+        ]
+        for sql in steps:
+            try:
+                res = self.database.execute_sql(sql)
+                print(f"SQL> {sql}")
+                format_query_result(res)
+                # 处理不抛异常但失败的情况：
+                if not res.get("success", True):
+                    upper_sql = sql.strip().upper()
+                    # 不支持 DROP TABLE 时，尝试清空表数据
+                    if upper_sql == "DROP TABLE USERS":
+                        try:
+                            alt = "DELETE FROM users"
+                            res2 = self.database.execute_sql(alt)
+                            print(f"SQL> {alt}")
+                            format_query_result(res2)
+                        except Exception as ee:
+                            print(f"    无法清空表 users: {ee}")
+                    # CREATE TABLE 已存在，则清空旧数据以便重复演示
+                    if upper_sql.startswith("CREATE TABLE USERS"):
+                        msg = res.get("message", "") or res.get("error", "")
+                        if "已存在" in msg or "存在" in msg:
+                            try:
+                                alt = "DELETE FROM users"
+                                res3 = self.database.execute_sql(alt)
+                                print(f"SQL> {alt}")
+                                format_query_result(res3)
+                            except Exception as ee:
+                                print(f"    无法清空表 users: {ee}")
+            except Exception as e:
+                print(f"SQL> {sql}")
+                print(f"    预期或可忽略错误: {e}")
+                # 兼容：不支持 DROP TABLE 时，尝试清空表数据
+                if sql.strip().upper() == "DROP TABLE USERS":
+                    try:
+                        alt = "DELETE FROM users"
+                        res2 = self.database.execute_sql(alt)
+                        print(f"SQL> {alt}")
+                        format_query_result(res2)
+                    except Exception as ee:
+                        print(f"    无法清空表 users: {ee}")
+        # 清理
+        for sql in ["DROP VIEW alice_only", "DROP VIEW adult_users", "DELETE FROM users", "DROP TABLE users"]:
+            try:
+                res = self.database.execute_sql(sql)
+                print(f"SQL> {sql}")
+                format_query_result(res)
+            except Exception as e:
+                print(f"SQL> {sql}")
+                print(f"    预期或可忽略错误: {e}")
+                if sql.strip().upper() == "DROP TABLE USERS":
+                    try:
+                        alt = "DELETE FROM users"
+                        res2 = self.database.execute_sql(alt)
+                        print(f"SQL> {alt}")
+                        format_query_result(res2)
+                    except Exception as ee:
+                        print(f"    无法清空表 users: {ee}")
+        print()
+
+    # 新增：演示 - DEFAULT / CHECK / FOREIGN KEY
+    def _demo_constraints(self):
+        print("\n=== DEMO: DEFAULT / CHECK / FOREIGN KEY ===")
+        # 清理可能存在的残留
+        cleanup = [
+            "DROP TABLE products_fk",
+            "DROP TABLE categories",
+            "DROP TABLE products",
+            "DROP TABLE t1",
+        ]
+        for sql in cleanup:
+            try:
+                res = self.database.execute_sql(sql)
+                print(f"SQL> {sql}")
+                format_query_result(res)
+            except Exception:
+                pass
+        # DEFAULT
+        seq = [
+            "CREATE TABLE t1 (id INTEGER PRIMARY KEY, name VARCHAR(20) DEFAULT 'unknown', age INTEGER DEFAULT 18)",
+            "INSERT INTO t1 (id) VALUES (1)",
+            "SELECT * FROM t1",
+        ]
+        for sql in seq:
+            res = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(res)
+        # CHECK
+        seq2 = [
+            "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL CHECK (price > 0), stock INTEGER CHECK (stock >= 0))",
+            "INSERT INTO products VALUES (1, 'Apple', 1.5, 100)",
+            "INSERT INTO products VALUES (2, 'Banana', 0.8, 0)",
+        ]
+        for sql in seq2:
+            res = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(res)
+        # 预期失败
+        for sql in [
+            "INSERT INTO products VALUES (3, 'Lemon', -1, 50)",
+            "INSERT INTO products VALUES (4, 'Orange', 2.0, -10)",
+        ]:
+            try:
+                res = self.database.execute_sql(sql)
+                print(f"SQL> {sql}")
+                if res.get("success"):
+                    print("    ❌ 预期失败，但成功了")
+                else:
+                    print(f"    ✅ 预期失败: {res.get('message')}")
+            except Exception as e:
+                print(f"SQL> {sql}")
+                print(f"    ✅ 抛出异常(符合预期): {e}")
+        # FOREIGN KEY
+        seq3 = [
+            "CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)",
+            "CREATE TABLE products_fk (id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER, FOREIGN KEY (category_id) REFERENCES categories(id))",
+            "INSERT INTO categories VALUES (10, 'Fruits')",
+            "INSERT INTO categories VALUES (20, 'Vegetables')",
+            "INSERT INTO products_fk VALUES (101, 'Apple', 10)",
+            "INSERT INTO products_fk VALUES (102, 'Orphan Product', NULL)",
+        ]
+        for sql in seq3:
+            res = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(res)
+        # 预期失败：不存在的外键
+        for sql in [
+            "INSERT INTO products_fk VALUES (103, 'Cabbage', 99)",
+            "UPDATE products_fk SET category_id = 88 WHERE id = 101",
+        ]:
+            try:
+                res = self.database.execute_sql(sql)
+                print(f"SQL> {sql}")
+                if res.get("success"):
+                    print("    ❌ 预期失败，但成功了")
+                else:
+                    print(f"    ✅ 预期失败: {res.get('message')}")
+            except Exception as e:
+                print(f"SQL> {sql}")
+                print(f"    ✅ 抛出异常(符合预期): {e}")
+        print()
 
     def _set_log_level(self, level: str):
         """设置日志级别"""
@@ -256,78 +550,88 @@ class SQLShell:
         """显示帮助信息"""
         print(
             """
-📚 MiniSQL 命令帮助
+        📚 MiniSQL 命令帮助
 
-📋 SQL语句:
-  CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
-  INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
-  SELECT columns FROM table_name [WHERE condition]     - 查询数据
-  UPDATE table_name SET col=val [WHERE ...]            - 更新数据
-  DELETE FROM table_name [WHERE ...]                   - 删除数据
-  BEGIN | START TRANSACTION                            - 开启事务
-  COMMIT                                               - 提交事务
-  ROLLBACK                                             - 回滚事务（当前未实现）
-  SET AUTOCOMMIT = 0|1                                 - 设置自动提交
-  SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
-  TRUNCATE TABLE table_name                            - 快速清空表数据
+        📋 SQL语句:
+        CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+        INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
+        SELECT columns FROM table_name [WHERE condition]     - 查询数据
+        UPDATE table_name SET col=val [WHERE ...]            - 更新数据
+        DELETE FROM table_name [WHERE ...]                   - 删除数据
+        BEGIN | START TRANSACTION                            - 开启事务
+        COMMIT                                               - 提交事务
+        ROLLBACK                                             - 回滚事务（当前未实现）
+        SET AUTOCOMMIT = 0|1                                 - 设置自动提交
+        SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
+        TRUNCATE TABLE table_name                            - 快速清空表数据
 
-🧭 会话管理:
-  \\session list                                      - 列出会话
-  \\session new                                       - 新建会话
-  \\session use <id>                                  - 切换会话
-  UPDATE table_name SET col=value [WHERE condition]    - 更新数据
-  DELETE FROM table_name [WHERE condition]             - 删除数据
-  
-🔍 索引操作:
-  CREATE INDEX index_name ON table_name (column)       - 创建索引
-  CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
-  DROP INDEX index_name                                - 删除索引
-  
-📊 系统命令:
-  tables                     - 列出所有表
-  describe <table>           - 查看表结构 (可简写为 desc)
-  show <table>               - 查看表数据内容 (等同于 SELECT * FROM table)
-  indexes [table_name]       - 查看索引信息
-  stats                      - 显示数据库统计信息
-  
-📝 日志命令:
-  log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
-  log stats                  - 显示日志统计信息
-  cache stats                - 显示详细缓存统计信息
-  
-🛠️ 其他命令:
-  help, ?                    - 显示此帮助
-  clear                      - 清屏
-  quit, exit                 - 退出Shell
-  
-💡 数据类型:
-  INTEGER          整数
-  VARCHAR(n)       字符串，最大长度n
-  FLOAT            浮点数
-  BOOLEAN          布尔值 (TRUE/FALSE)
-  CHAR = "CHAR"         固定长度字符串
-  DECIMAL = "DECIMAL"   精确小数
-  DATE = "DATE"         日期类型
-  TIME = "TIME"         时间类型
-  DATETIME = "DATETIME" 日期时间类型
-  BIGINT = "BIGINT"     64位整数
-  TINYINT = "TINYINT"   8位整数
-  TEXT = "TEXT"         长文本  
+        🧭 会话管理:
+        \\session list                                      - 列出会话
+        \\session new                                       - 新建会话
+        \\session use <id>                                  - 切换会话
+        UPDATE table_name SET col=value [WHERE condition]    - 更新数据
+        DELETE FROM table_name [WHERE condition]             - 删除数据
+        
+        🔍 索引操作:
+        CREATE INDEX index_name ON table_name (column)       - 创建索引
+        CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
+        DROP INDEX index_name                                - 删除索引
+        
+        📊 系统命令:
+        tables                     - 列出所有表
+        describe <table>           - 查看表结构 (可简写为 desc)
+        show <table>               - 查看表数据内容 (等同于 SELECT * FROM table)
+        indexes [table_name]       - 查看索引信息
+        stats                      - 显示数据库统计信息
+        
+        📝 日志命令:
+        log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+        log stats                  - 显示日志统计信息
+        cache stats                - 显示详细缓存统计信息
+        
+        🛠️ 其他命令:
+        help, ?                    - 显示此帮助
+        clear                      - 清屏
+        quit, exit                 - 退出Shell
+        
+        💡 数据类型:
+        INTEGER          整数
+        VARCHAR(n)       字符串，最大长度n
+        FLOAT            浮点数
+        BOOLEAN          布尔值 (TRUE/FALSE)
+        CHAR = "CHAR"         固定长度字符串
+        DECIMAL = "DECIMAL"   精确小数
+        DATE = "DATE"         日期类型
+        TIME = "TIME"         时间类型
+        DATETIME = "DATETIME" 日期时间类型
+        BIGINT = "BIGINT"     64位整数
+        TINYINT = "TINYINT"   8位整数
+        TEXT = "TEXT"         长文本  
 
-🔒 约束:
-  PRIMARY KEY      主键
-  NOT NULL         非空
-  NULL            允许为空
+        🔒 约束:
+        PRIMARY KEY      主键
+        NOT NULL         非空
+        NULL            允许为空
+        DEFAULT         默认值（例如: name VARCHAR(20) DEFAULT 'unknown')
+        CHECK           条件约束（例如: price REAL CHECK (price > 0)）
+        FOREIGN KEY     外键（例如: FOREIGN KEY (cid) REFERENCES categories(id)）
 
-💡 示例:
-  CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50));
-  INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
-  show users                           -- 查看表数据
-  UPDATE users SET name = 'NewName' WHERE id = 1;
-  DELETE FROM users WHERE id = 2;
-  CREATE INDEX idx_user_id ON users (id);
-  log level DEBUG                      -- 设置调试级别日志
-  cache stats                          -- 查看缓存详情
+        👁️ 视图相关:
+        views | show views         - 列出所有视图
+        describe view <name>       - 查看视图定义
+        show view <name>           - 别名，与上等价
+        提示: 输入 'help views' 查看视图命令说明；输入 'demo views' 可运行视图演示
+        提示: 输入 'demo constraints' 可运行 DEFAULT/CHECK/FOREIGN KEY 演示
+
+        💡 示例:
+        CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50));
+        INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+        show users                           -- 查看表数据
+        UPDATE users SET name = 'NewName' WHERE id = 1;
+        DELETE FROM users WHERE id = 2;
+        CREATE INDEX idx_user_id ON users (id);
+        log level DEBUG                      -- 设置调试级别日志
+        cache stats                          -- 查看缓存详情
         """
         )
 
