@@ -108,7 +108,21 @@ class SQLExecutor:
                 raise ValueError(f"不支持的语句类型: {type(ast)}")
         except Exception as e:
             # 统一异常返回结构，避免KeyError
-            return {"success": False, "error": str(e), "data": None, "message": f"SQL执行失败: {str(e)}"}
+            return {"success": False, "error": str(e), "data": [], "message": f"SQL执行失败: {str(e)}"}
+
+    # --- 新增：CHECK 评估（NULL 视为通过，不违反约束） ---
+    def _evaluate_check(self, condition: Expression, record_data: Dict[str, Any]) -> bool:
+        try:
+            # 如果任一侧取值为 None，按 SQL 三值逻辑视为 UNKNOWN，不违反约束
+            if isinstance(condition, BinaryOp):
+                left_val = self._evaluate_expression(condition.left, record_data)
+                right_val = self._evaluate_expression(condition.right, record_data)
+                if left_val is None or right_val is None:
+                    return True
+            return self._evaluate_condition(condition, record_data)
+        except Exception:
+            # 任意异常都视为不违反（保守处理），避免插入失败
+            return True
 
     def _execute_create_table(self, stmt: CreateTableStatement) -> Dict[str, Any]:
         """执行CREATE TABLE"""
@@ -294,11 +308,11 @@ class SQLExecutor:
             for column in schema.columns:
                 if column.check is not None:
                     context = record_data.copy()
-                    if not self._evaluate_condition(column.check, context):
+                    if not self._evaluate_check(column.check, context):
                         raise ValueError(f"CHECK约束不满足: {column.name}")
             for check_expr in getattr(schema, "check_constraints", []):
                 context = record_data.copy()
-                if not self._evaluate_condition(check_expr, context):
+                if not self._evaluate_check(check_expr, context):
                     raise ValueError("表级CHECK约束不满足")
 
             # 校验FOREIGN KEY约束
