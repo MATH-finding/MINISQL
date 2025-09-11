@@ -123,18 +123,31 @@ class InsertStatement(Statement):
         return f"INSERT INTO {self.table_name} ({self.columns}) VALUES {self.values}"
 
 
+class OrderItem(ASTNode):
+    def __init__(self, expr: Union[ColumnRef, str], direction: str = "ASC"):
+        self.expr = expr
+        self.direction = direction.upper()
+
+    def __repr__(self):
+        return f"{self.expr} {self.direction}"
+
+
 class SelectStatement(Statement):
     """SELECT 语句"""
 
     def __init__(
         self,
-        columns: List[Union[ColumnRef, str]],
+        columns: List[Union[ColumnRef, str, AggregateFunction]],
         from_table: Union[str, "JoinClause"],  # 修改为支持JoinClause
         where_clause: Optional[Expression] = None,
+        group_by: Optional[List[Union[ColumnRef, str]]] = None,
+        order_by: Optional[List[OrderItem]] = None,
     ):
         self.columns = columns  # 选择的列，'*' 表示所有列
         self.from_table = from_table  # 表名或JoinClause
         self.where_clause = where_clause  # WHERE条件
+        self.group_by = group_by or []
+        self.order_by = order_by or []
         # print(f"[AST DEBUG] SelectStatement created: columns={columns}, from_table={from_table}, where_clause={where_clause}")
 
     def __repr__(self):
@@ -142,6 +155,10 @@ class SelectStatement(Statement):
         result = f"SELECT {cols} FROM {self.from_table}"
         if self.where_clause:
             result += f" WHERE {self.where_clause}"
+        if self.group_by:
+            result += " GROUP BY " + ", ".join(str(g) for g in self.group_by)
+        if self.order_by:
+            result += " ORDER BY " + ", ".join(str(o) for o in self.order_by)
         return result
 
 

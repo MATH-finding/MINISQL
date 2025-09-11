@@ -345,13 +345,64 @@ class SQLParser:
             self._advance()
             where_clause = self._parse_where_expression()
 
+        # GROUP BY 子句（可选）
+        group_by = []
+        if self.current_token and self.current_token.type == TokenType.GROUP and self._peek_token_type(1) == TokenType.BY:
+            self._advance()  # GROUP
+            self._advance()  # BY
+            while True:
+                if self.current_token.type == TokenType.IDENTIFIER:
+                    name = self._expect(TokenType.IDENTIFIER).value
+                    if self.current_token and self.current_token.type == TokenType.DOT:
+                        self._advance()
+                        table_name = name
+                        col_name = self._expect(TokenType.IDENTIFIER).value
+                        group_by.append(ColumnRef(col_name, table_name))
+                    else:
+                        group_by.append(ColumnRef(name))
+                else:
+                    raise SyntaxError("GROUP BY 期望列名")
+                if self.current_token and self.current_token.type == TokenType.COMMA:
+                    self._advance()
+                else:
+                    break
+
+        # ORDER BY 子句（可选）
+        order_by = []
+        if self.current_token and self.current_token.type == TokenType.ORDER and self._peek_token_type(1) == TokenType.BY:
+            self._advance()  # ORDER
+            self._advance()  # BY
+            while True:
+                # 列名或标识符
+                if self.current_token.type == TokenType.IDENTIFIER:
+                    name = self._expect(TokenType.IDENTIFIER).value
+                    if self.current_token and self.current_token.type == TokenType.DOT:
+                        self._advance()
+                        table_name = name
+                        col_name = self._expect(TokenType.IDENTIFIER).value
+                        expr = ColumnRef(col_name, table_name)
+                    else:
+                        expr = ColumnRef(name)
+                else:
+                    raise SyntaxError("ORDER BY 期望列名")
+                # 方向（可选）
+                direction = "ASC"
+                if self.current_token and self.current_token.type in (TokenType.ASC, TokenType.DESC):
+                    direction = self.current_token.value.upper()
+                    self._advance()
+                order_by.append(OrderItem(expr, direction))
+                if self.current_token and self.current_token.type == TokenType.COMMA:
+                    self._advance()
+                else:
+                    break
+
         # DEBUG: 打印SELECT解析结果摘要
         try:
             cols_repr = ", ".join(str(c) for c in columns)
         except Exception:
             cols_repr = str(columns)
         # print(f"[PARSER DEBUG] SELECT parsed: columns=[{cols_repr}], from={left}, where={where_clause}")
-        return SelectStatement(columns, left, where_clause)
+        return SelectStatement(columns, left, where_clause, group_by, order_by)
 
     def _parse_where_expression(self) -> Expression:
         """解析 WHERE 表达式"""

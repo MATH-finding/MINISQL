@@ -396,118 +396,229 @@ class SQLExecutor:
                 filtered_records.append(record)
         # print(f"[EXECUTOR DEBUG] _execute_select: rows_after_where={len(filtered_records)}")
 
-        # 检查是否有聚合函数
-        if any(isinstance(col, AggregateFunction) for col in stmt.columns):
-            agg_result = {}
-            for col in stmt.columns:
-                if isinstance(col, AggregateFunction):
-                    func = col.func_name.upper()
-                    arg = col.arg
-                    if func == "COUNT":
-                        if arg == "*":
-                            agg_result["COUNT"] = len(filtered_records)
-                        elif isinstance(arg, ColumnRef):
-                            # 只统计非NULL
-                            agg_result["COUNT"] = sum(
-                                1
-                                for r in filtered_records
-                                if self._evaluate_expression(arg, r.data) is not None
-                            )
-                        else:
-                            raise ValueError("COUNT参数不支持")
-                    elif func == "SUM":
-                        if isinstance(arg, ColumnRef):
-                            values = [
-                                self._evaluate_expression(arg, r.data)
-                                for r in filtered_records
-                            ]
-                            agg_result["SUM"] = sum(v for v in values if v is not None)
-                        else:
-                            raise ValueError("SUM参数不支持")
-                    elif func == "AVG":
-                        if isinstance(arg, ColumnRef):
-                            values = [
-                                self._evaluate_expression(arg, r.data)
-                                for r in filtered_records
-                                if self._evaluate_expression(arg, r.data) is not None
-                            ]
-                            agg_result["AVG"] = (
-                                sum(values) / len(values) if values else None
-                            )
-                        else:
-                            raise ValueError("AVG参数不支持")
-                    elif func == "MIN":
-                        if isinstance(arg, ColumnRef):
-                            values = [
-                                self._evaluate_expression(arg, r.data)
-                                for r in filtered_records
-                                if self._evaluate_expression(arg, r.data) is not None
-                            ]
-                            agg_result["MIN"] = min(values) if values else None
-                        else:
-                            raise ValueError("MIN参数不支持")
-                    elif func == "MAX":
-                        if isinstance(arg, ColumnRef):
-                            values = [
-                                self._evaluate_expression(arg, r.data)
-                                for r in filtered_records
-                                if self._evaluate_expression(arg, r.data) is not None
-                            ]
-                            agg_result["MAX"] = max(values) if values else None
-                        else:
-                            raise ValueError("MAX参数不支持")
-                    else:
-                        raise ValueError(f"不支持的聚合函数: {func}")
-            result_records = [agg_result]
-        else:
-            # 选择列
-            result_records = []
-            for record in filtered_records:
-                context = getattr(record, '_filtered_context', record.data)
-                if stmt.columns == ["*"]:
-                    # 返回所有表结构定义的字段
-                    row = {}
-                    schema = self.catalog.get_table_schema(
-                        from_name if isinstance(from_name, str) else stmt.from_table
-                    )
-                    for col in schema.columns:
-                        row[col.name] = record.data.get(col.name)
-                    result_records.append(row)
+        # 如果存在 GROUP BY
+        if getattr(stmt, 'group_by', None):
+            # 构建分组
+            groups: Dict[tuple, List[Any]] = {}
+            group_key_names: List[str] = []
+            # 预先解析 group key 名称（按列名）
+            for g in stmt.group_by:
+                if isinstance(g, ColumnRef):
+                    group_key_names.append(g.column_name)
                 else:
-                    selected_data = {}
+                    group_key_names.append(str(g))
+
+            def build_group_key(ctx: Dict[str, Any]) -> tuple:
+                keys = []
+                for g in stmt.group_by:
+                    if isinstance(g, ColumnRef):
+                        keys.append(self._evaluate_expression(g, ctx))
+                    else:
+                        # 简化实现：只支持列名
+                        keys.append(ctx.get(str(g)))
+                return tuple(keys)
+
+            for rec in filtered_records:
+                ctx = getattr(rec, '_filtered_context', rec.data)
+                key = build_group_key(ctx)
+                groups.setdefault(key, []).append(ctx)
+
+            # 判断是否含聚合
+            has_agg = any(isinstance(c, AggregateFunction) for c in stmt.columns)
+
+            result_records: List[Dict[str, Any]] = []
+            if has_agg:
+                # 逐组计算聚合
+                for key_tuple, rows in groups.items():
+                    row_out: Dict[str, Any] = {}
+                    # 输出分组键
+                    for idx, name in enumerate(group_key_names):
+                        row_out[name] = key_tuple[idx]
+
                     for col in stmt.columns:
-                        if isinstance(col, ColumnRef):
-                            col_name = col.column_name
-                            if col_name in context:
-                                selected_data[col_name] = context[col_name]
+                        if isinstance(col, AggregateFunction):
+                            func = col.func_name.upper()
+                            arg = col.arg
+                            if func == "COUNT":
+                                if arg == "*":
+                                    row_out["COUNT"] = len(rows)
+                                elif isinstance(arg, ColumnRef):
+                                    row_out["COUNT"] = sum(1 for r in rows if self._evaluate_expression(arg, r) is not None)
+                                else:
+                                    raise ValueError("COUNT参数不支持")
+                            elif func == "SUM":
+                                if isinstance(arg, ColumnRef):
+                                    values = [self._evaluate_expression(arg, r) for r in rows]
+                                    row_out["SUM"] = sum(v for v in values if v is not None)
+                                else:
+                                    raise ValueError("SUM参数不支持")
+                            elif func == "AVG":
+                                if isinstance(arg, ColumnRef):
+                                    values = [self._evaluate_expression(arg, r) for r in rows if self._evaluate_expression(arg, r) is not None]
+                                    row_out["AVG"] = (sum(values) / len(values) if values else None)
+                                else:
+                                    raise ValueError("AVG参数不支持")
+                            elif func == "MIN":
+                                if isinstance(arg, ColumnRef):
+                                    values = [self._evaluate_expression(arg, r) for r in rows if self._evaluate_expression(arg, r) is not None]
+                                    row_out["MIN"] = (min(values) if values else None)
+                                else:
+                                    raise ValueError("MIN参数不支持")
+                            elif func == "MAX":
+                                if isinstance(arg, ColumnRef):
+                                    values = [self._evaluate_expression(arg, r) for r in rows if self._evaluate_expression(arg, r) is not None]
+                                    row_out["MAX"] = (max(values) if values else None)
+                                else:
+                                    raise ValueError("MAX参数不支持")
                             else:
-                                matches = [
-                                    k
-                                    for k in record.data
-                                    if k.endswith(f".{col.column_name}")
-                                    or k == col.column_name
-                                ]
-                                if len(matches) == 1:
-                                    selected_data[col_name] = context[matches[0]]
-                                elif len(matches) == 0:
-                                    raise ValueError(f"列 {col_name} 不存在")
-                                else:
-                                    raise ValueError(
-                                        f"列 {col.column_name} 不明确，请加表前缀"
-                                    )
-                                if key in record.data:
-                                    selected_data[col.column_name] = record.data[key]
-                                else:
-                                    raise ValueError(f"列 {key} 不存在")
-                        elif isinstance(col, AggregateFunction):
-                            raise ValueError("聚合函数只能单独出现在SELECT列表中")
+                                raise ValueError(f"不支持的聚合函数: {func}")
+                        elif isinstance(col, ColumnRef):
+                            # 非聚合列必须在分组键中
+                            if col.column_name in group_key_names:
+                                row_out[col.column_name] = row_out.get(col.column_name)
+                            else:
+                                raise ValueError("GROUP BY 查询中，非聚合列必须包含在分组键中")
+                        elif isinstance(col, str) and col == "*":
+                            # 忽略 * 在分组+聚合场景
+                            pass
                         else:
-                            if col in context:
-                                selected_data[col] = context[col]
+                            raise ValueError("GROUP BY 查询的列仅支持分组列或聚合函数")
+                    result_records.append(row_out)
+            else:
+                # 无聚合：返回唯一分组键
+                for key_tuple in groups:
+                    row_out = {}
+                    for idx, name in enumerate(group_key_names):
+                        row_out[name] = key_tuple[idx]
+                    result_records.append(row_out)
+
+        else:
+            # 检查是否有聚合函数（无分组 -> 全表聚合）
+            if any(isinstance(col, AggregateFunction) for col in stmt.columns):
+                agg_result = {}
+                for col in stmt.columns:
+                    if isinstance(col, AggregateFunction):
+                        func = col.func_name.upper()
+                        arg = col.arg
+                        if func == "COUNT":
+                            if arg == "*":
+                                agg_result["COUNT"] = len(filtered_records)
+                            elif isinstance(arg, ColumnRef):
+                                # 只统计非NULL
+                                agg_result["COUNT"] = sum(
+                                    1
+                                    for r in filtered_records
+                                    if self._evaluate_expression(arg, r.data) is not None
+                                )
                             else:
-                                raise ValueError(f"列 {col} 不存在")
-                    result_records.append(selected_data)
+                                raise ValueError("COUNT参数不支持")
+                        elif func == "SUM":
+                            if isinstance(arg, ColumnRef):
+                                values = [
+                                    self._evaluate_expression(arg, r.data)
+                                    for r in filtered_records
+                                ]
+                                agg_result["SUM"] = sum(v for v in values if v is not None)
+                            else:
+                                raise ValueError("SUM参数不支持")
+                        elif func == "AVG":
+                            if isinstance(arg, ColumnRef):
+                                values = [
+                                    self._evaluate_expression(arg, r.data)
+                                    for r in filtered_records
+                                    if self._evaluate_expression(arg, r.data) is not None
+                                ]
+                                agg_result["AVG"] = (
+                                    sum(values) / len(values) if values else None
+                                )
+                            else:
+                                raise ValueError("AVG参数不支持")
+                        elif func == "MIN":
+                            if isinstance(arg, ColumnRef):
+                                values = [
+                                    self._evaluate_expression(arg, r.data)
+                                    for r in filtered_records
+                                    if self._evaluate_expression(arg, r.data) is not None
+                                ]
+                                agg_result["MIN"] = min(values) if values else None
+                            else:
+                                raise ValueError("MIN参数不支持")
+                        elif func == "MAX":
+                            if isinstance(arg, ColumnRef):
+                                values = [
+                                    self._evaluate_expression(arg, r.data)
+                                    for r in filtered_records
+                                    if self._evaluate_expression(arg, r.data) is not None
+                                ]
+                                agg_result["MAX"] = max(values) if values else None
+                            else:
+                                raise ValueError("MAX参数不支持")
+                        else:
+                            raise ValueError(f"不支持的聚合函数: {func}")
+                result_records = [agg_result]
+            else:
+                # 选择列（原有逻辑）
+                result_records = []
+                for record in filtered_records:
+                    context = getattr(record, '_filtered_context', record.data)
+                    if stmt.columns == ["*"]:
+                        # 返回所有表结构定义的字段
+                        row = {}
+                        schema = self.catalog.get_table_schema(
+                            from_name if isinstance(from_name, str) else stmt.from_table
+                        )
+                        for col in schema.columns:
+                            row[col.name] = record.data.get(col.name)
+                        result_records.append(row)
+                    else:
+                        selected_data = {}
+                        for col in stmt.columns:
+                            if isinstance(col, ColumnRef):
+                                col_name = col.column_name
+                                if col_name in context:
+                                    selected_data[col_name] = context[col_name]
+                                else:
+                                    matches = [
+                                        k
+                                        for k in record.data
+                                        if k.endswith(f".{col.column_name}")
+                                        or k == col.column_name
+                                    ]
+                                    if len(matches) == 1:
+                                        selected_data[col_name] = context[matches[0]]
+                                    elif len(matches) == 0:
+                                        raise ValueError(f"列 {col_name} 不存在")
+                                    else:
+                                        raise ValueError(
+                                            f"列 {col.column_name} 不明确，请加表前缀"
+                                        )
+                                    if key in record.data:
+                                        selected_data[col.column_name] = record.data[key]
+                                    else:
+                                        raise ValueError(f"列 {key} 不存在")
+                            elif isinstance(col, AggregateFunction):
+                                raise ValueError("聚合函数只能单独出现在SELECT列表中")
+                            else:
+                                if col in context:
+                                    selected_data[col] = context[col]
+                                else:
+                                    raise ValueError(f"列 {col} 不存在")
+                        result_records.append(selected_data)
         # print(f"[EXECUTOR DEBUG] _execute_select: rows_projected={len(result_records)}")
+
+        # ORDER BY 排序
+        if getattr(stmt, 'order_by', None):
+            def sort_key(row: Dict[str, Any]):
+                keys = []
+                for item in stmt.order_by:
+                    name = item.expr.column_name if isinstance(item.expr, ColumnRef) else str(item.expr)
+                    keys.append(row.get(name))
+                return tuple(keys)
+            # Python的排序无法为不同列设置不同方向一次完成，采用链式稳定排序（从次关键字到主关键字）
+            for item in reversed(stmt.order_by):
+                name = item.expr.column_name if isinstance(item.expr, ColumnRef) else str(item.expr)
+                reverse = (item.direction.upper() == "DESC")
+                result_records.sort(key=lambda r: r.get(name), reverse=reverse)
 
         return {
             "type": "SELECT",
@@ -659,6 +770,7 @@ class SQLExecutor:
     ) -> List[Record]:
         """根据记录ID获取记录 - 修复版"""
         all_records = self.table_manager.scan_table(table_name)
+
         result = []
 
         for record_id in record_ids:

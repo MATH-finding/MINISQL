@@ -7,6 +7,119 @@ from typing import Optional
 from .database import SimpleDatabase
 from .formatter import format_query_result, format_table_info, format_database_stats
 
+# 可选：增强型交互输入（灰色联想、补全）
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.auto_suggest import AutoSuggest
+    from prompt_toolkit.document import Document
+    from prompt_toolkit.formatted_text import HTML
+    HAS_PT = True
+except Exception:
+    HAS_PT = False
+
+# 防御性回退：某些 prompt_toolkit 版本可能没有 Completer/AutoSuggest 符号
+if HAS_PT:
+    try:
+        Completer  # type: ignore
+    except NameError:
+        class Completer(object):  # type: ignore
+            pass
+    try:
+        AutoSuggest  # type: ignore
+    except NameError:
+        class AutoSuggest(object):  # type: ignore
+            pass
+
+
+if HAS_PT:
+    class _SQLCompleter(Completer):
+        def __init__(self, database: SimpleDatabase):
+            self.db = database
+            self.keywords = [
+                "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "CREATE", "TABLE",
+                "UPDATE", "DELETE", "DROP", "TRUNCATE", "JOIN", "INNER", "LEFT", "RIGHT",
+                "ON", "GROUP", "BY", "ORDER", "ASC", "DESC", "INDEX", "UNIQUE", "VIEW", "AS",
+                "COUNT", "SUM", "AVG", "MIN", "MAX",
+            ]
+
+        def get_completions(self, document: 'Document', complete_event):
+            text = document.text_before_cursor
+            word = document.get_word_before_cursor(WORD=True)
+            if not word:
+                # 提供顶层建议
+                for kw in self.keywords:
+                    yield Completion(kw, start_position=0)
+                # 表名
+                try:
+                    for t in self.db.list_tables() or []:
+                        yield Completion(t, start_position=0)
+                except Exception:
+                    pass
+                return
+
+            low = word.lower()
+            # 关键字补全
+            for kw in self.keywords:
+                if kw.lower().startswith(low):
+                    yield Completion(kw, start_position=-len(word))
+            # 表名补全
+            try:
+                for t in self.db.list_tables() or []:
+                    if t.lower().startswith(low):
+                        yield Completion(t, start_position=-len(word))
+            except Exception:
+                pass
+
+            # 简单列补全：如果文本包含一个已存在的表名，则补全该表列
+            try:
+                tables = set(self.db.list_tables() or [])
+                for t in tables:
+                    if t.lower() in text.lower():
+                        schema = self.db.catalog.get_table_schema(t)
+                        if schema:
+                            for col in schema.columns:
+                                name = col.name
+                                # 支持裸列与 table.col
+                                if name.lower().startswith(low):
+                                    yield Completion(name, start_position=-len(word))
+                                dotted = f"{t}.{name}"
+                                if dotted.lower().startswith(low):
+                                    yield Completion(dotted, start_position=-len(word))
+            except Exception:
+                pass
+
+
+    class _InlineSuggest(AutoSuggest):
+        def __init__(self, database: SimpleDatabase):
+            self.db = database
+            self.seed_words = [
+                "help", "tables", "views", "stats", "indexes", "describe ", "show ",
+                "CREATE TABLE ", "SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM ",
+            ]
+
+        def get_suggestion(self, buffer, document: 'Document'):
+            text = document.text_before_cursor
+            if not text:
+                return None
+            # 基于固定词典的灰色联想（当输入是前缀时补足建议）
+            for w in self.seed_words:
+                if w.lower().startswith(text.lower()) and w.lower() != text.lower():
+                    from prompt_toolkit.auto_suggest import Suggestion
+                    return Suggestion(w[len(text):])
+            # 针对表名提供联想
+            try:
+                for t in self.db.list_tables() or []:
+                    if t.lower().startswith(text.lower()) and t.lower() != text.lower():
+                        from prompt_toolkit.auto_suggest import Suggestion
+                        return Suggestion(t[len(text):])
+            except Exception:
+                pass
+            return None
+else:
+    _SQLCompleter = None
+    _InlineSuggest = None
+
 
 class SQLShell:
     """SQL交互式Shell"""
@@ -14,6 +127,15 @@ class SQLShell:
     def __init__(self, database: SimpleDatabase):
         self.database = database
         self.running = True
+        self._pt_session = None
+        if HAS_PT:
+            try:
+                self._pt_session = PromptSession(
+                    completer=_SQLCompleter(database) if _SQLCompleter else None,
+                    auto_suggest=_InlineSuggest(database) if _InlineSuggest else None,
+                )
+            except Exception:
+                self._pt_session = None
 
     def start(self):
         """启动Shell"""
@@ -21,6 +143,8 @@ class SQLShell:
         print("🗄️  欢迎使用简化版数据库系统 SQL Shell")
         print("=" * 60)
         print("输入 'help' 查看帮助，输入 'quit' 或 'exit' 退出")
+        if HAS_PT and self._pt_session:
+            print("提示: 支持灰色联想与补全，输入 'hel' 会提示 'help'")
         print()
 
         while self.running:
@@ -46,19 +170,28 @@ class SQLShell:
                 break
 
     def _get_input(self) -> Optional[str]:
-        """获取用户输入"""
+        """获取用户输入（支持 prompt_toolkit 联想/补全）"""
         try:
-            line = input("SQL> ").strip()
+            if HAS_PT and self._pt_session:
+                line = self._pt_session.prompt("SQL> ")
+            else:
+                line = input("SQL> ")
+            line = line.strip()
 
             # 处理多行输入
             if line and not line.endswith(";"):
                 lines = [line]
                 while True:
-                    continuation = input("...> ").strip()
-                    if not continuation:
+                    cont = None
+                    if HAS_PT and self._pt_session:
+                        cont = self._pt_session.prompt("...> ")
+                    else:
+                        cont = input("...> ")
+                    cont = cont.strip()
+                    if not cont:
                         break
-                    lines.append(continuation)
-                    if continuation.endswith(";"):
+                    lines.append(cont)
+                    if cont.endswith(";"):
                         break
                 line = " ".join(lines)
 
@@ -278,6 +411,8 @@ class SQLShell:
             INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
             SELECT columns FROM table_name [WHERE condition]     - 查询数据
             [JOIN ... ON ...]、聚合 COUNT/SUM/AVG/MIN/MAX        - 进阶查询
+            GROUP BY col1, col2                                  - 分组聚合
+            ORDER BY col [ASC|DESC], col2 [ASC|DESC]             - 排序
             UPDATE table_name SET col=val [WHERE ...]            - 更新数据
             DELETE FROM table_name [WHERE ...]                   - 删除数据
             CREATE INDEX idx ON table (column)                   - 创建索引
@@ -560,6 +695,8 @@ SELECT columns FROM table_name [WHERE condition]     - 查询数据
 UPDATE table_name SET col=val [WHERE condition]      - 更新数据
 DELETE FROM table_name [WHERE condition]             - 删除数据
 TRUNCATE TABLE table_name                            - 快速清空表数据（保留结构）
+GROUP BY col1, col2                                  - 分组聚合
+ORDER BY col [ASC|DESC], col2 [ASC|DESC]             - 排序
 
 🔄 事务管理:
 BEGIN | START TRANSACTION                            - 开启事务
@@ -643,7 +780,7 @@ CREATE INDEX idx_user_id ON users (id);
 log level DEBUG                      -- 设置调试级别日志
 cache stats                          -- 查看缓存详情
 
-        """
+            """
         )
 
     def _show_tables(self):
@@ -695,6 +832,7 @@ cache stats                          -- 查看缓存详情
         """显示数据库统计信息"""
         stats = self.database.get_database_stats()
         format_database_stats(stats)
+
 
 
 def interactive_sql_shell(database: SimpleDatabase):

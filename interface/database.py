@@ -9,6 +9,8 @@ from catalog import SystemCatalog
 from catalog.index_manager import IndexManager
 from table import TableManager
 from sql import SQLLexer, SQLParser, SQLExecutor
+from sql.semantic import SemanticAnalyzer, SemanticError
+from sql.diagnostics import DiagnosticEngine
 
 
 class SimpleDatabase:
@@ -50,6 +52,10 @@ class SimpleDatabase:
 
         self.executor = self.sql_executor
 
+        # 新增：语义分析器 与 诊断纠错引擎
+        self.semantic = SemanticAnalyzer(self.catalog)
+        self.diag = DiagnosticEngine(self.catalog, auto_correct=True)
+
         print(f"数据库 {db_file} 已连接")
 
     def execute_sql(self, sql: str) -> Dict[str, Any]:
@@ -63,8 +69,24 @@ class SimpleDatabase:
             parser = SQLParser(tokens)
             ast = parser.parse()
 
+            # 语义分析
+            try:
+                analyzed = self.semantic.analyze(ast)
+                ast_to_run = analyzed.ast
+            except SemanticError as se:
+                # 尝试纠错一次
+                corr = self.diag.try_correct(ast, str(se))
+                if corr.changed and corr.ast is not None:
+                    try:
+                        analyzed = self.semantic.analyze(corr.ast)
+                        ast_to_run = analyzed.ast
+                    except SemanticError as se2:
+                        return {"success": False, "error": str(se2), "message": f"语义错误: {str(se2)}", "hints": corr.hints, "data": []}
+                else:
+                    return {"success": False, "error": str(se), "message": f"语义错误: {str(se)}", "data": []}
+
             # 执行SQL
-            result = self.sql_executor.execute(ast)
+            result = self.sql_executor.execute(ast_to_run)
 
             # 记录SQL执行日志
             if self.log_manager:
@@ -74,6 +96,10 @@ class SimpleDatabase:
 
             return result
 
+        except (SemanticError,) as e:
+            if self.log_manager:
+                self.log_manager.log_sql_execution(sql, False, 0.0, 0)
+            return {"success": False, "error": str(e), "message": f"语义错误: {str(e)}", "data": []}
         except Exception as e:
             # 记录SQL执行失败日志
             if self.log_manager:
@@ -83,6 +109,7 @@ class SimpleDatabase:
                 "success": False,
                 "error": str(e),
                 "message": f"SQL执行失败: {str(e)}",
+                "data": [],
             }
 
     def create_index(

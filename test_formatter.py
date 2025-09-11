@@ -18,6 +18,13 @@ from interface.formatter import (
     _format_select_result
 )
 
+# 新增: 语义分析集成测试需要数据库
+try:
+    from interface.database import SimpleDatabase
+    HAS_DB = True
+except Exception:
+    HAS_DB = False
+
 class TestFormatter:
     """Formatter功能测试类"""
     
@@ -97,6 +104,30 @@ class TestFormatter:
         }
         print("\n测试用例5: 未知类型操作")
         self._capture_output(lambda: format_query_result(test_case_5))
+
+        # 新增: ORDER BY / GROUP BY 的格式化展示
+        print("\n测试用例6: ORDER BY 结果展示")
+        order_by_result = {
+            "success": True,
+            "type": "SELECT",
+            "data": [
+                {"name": "Alice", "score": 98},
+                {"name": "Bob", "score": 85},
+                {"name": "Carol", "score": 76},
+            ]
+        }
+        self._capture_output(lambda: format_query_result(order_by_result))
+
+        print("\n测试用例7: GROUP BY 结果展示(含COUNT)")
+        group_by_result = {
+            "success": True,
+            "type": "SELECT",
+            "data": [
+                {"dept": "HR", "COUNT": 3},
+                {"dept": "ENG", "COUNT": 5},
+            ]
+        }
+        self._capture_output(lambda: format_query_result(group_by_result))
         
         self._mark_test_passed("format_query_result基本功能")
     
@@ -147,6 +178,16 @@ class TestFormatter:
         }
         print("\n测试用例5: 长文本数据")
         self._capture_output(lambda: _format_select_result(test_data_5))
+
+        # 新增: GROUP BY + 聚合结果
+        test_data_6 = {
+            "data": [
+                {"dept": "ENG", "SUM": 120, "COUNT": 5},
+                {"dept": "HR", "SUM": 60, "COUNT": 3},
+            ]
+        }
+        print("\n测试用例6: GROUP BY + 聚合结果")
+        self._capture_output(lambda: _format_select_result(test_data_6))
         
         self._mark_test_passed("_format_select_result基本功能")
     
@@ -275,6 +316,64 @@ class TestFormatter:
         self._capture_output(lambda: format_database_stats(stats_3))
         
         self._mark_test_passed("format_database_stats基本功能")
+
+    # 新增：语义分析集成测试
+    def test_semantic_integration(self):
+        print("\n🧠 测试 语义分析 集成")
+        print("-" * 30)
+        if not HAS_DB:
+            print("(跳过) 环境缺少数据库依赖，无法运行语义分析集成测试")
+            self._mark_test_passed("语义分析集成(跳过)")
+            return
+        db_path = "semantic_test.db"
+        if os.path.exists(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        db = SimpleDatabase(db_path, cache_size=16)
+        try:
+            # 建表
+            format_query_result(db.execute_sql("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)"))
+            format_query_result(db.execute_sql("CREATE TABLE emp (id INTEGER PRIMARY KEY, name TEXT, dept_id INTEGER, salary INTEGER)"))
+            # 插入
+            db.execute_sql("INSERT INTO dept VALUES (1, 'HR')")
+            db.execute_sql("INSERT INTO dept VALUES (2, 'ENG')")
+            db.execute_sql("INSERT INTO emp VALUES (10, 'Alice', 1, 100)")
+            db.execute_sql("INSERT INTO emp VALUES (11, 'Bob', 2, 200)")
+            db.execute_sql("INSERT INTO emp VALUES (12, 'Carol', 2, 300)")
+
+            # 1) * 展开与 ORDER BY（列在选择列表中）
+            print("\n[用例1] SELECT * 与 ORDER BY name DESC")
+            res1 = db.execute_sql("SELECT * FROM emp ORDER BY name DESC")
+            format_query_result(res1)
+
+            # 2) GROUP BY 正确用法
+            print("\n[用例2] GROUP BY dept_id, 计算 COUNT 与 SUM")
+            res2 = db.execute_sql("SELECT dept_id, COUNT(*), SUM(salary) FROM emp GROUP BY dept_id ORDER BY dept_id ASC")
+            format_query_result(res2)
+
+            # 3) 违反聚合规则（应触发语义错误）
+            print("\n[用例3] 聚合规则校验 (应失败)")
+            res3 = db.execute_sql("SELECT dept_id, salary FROM emp GROUP BY dept_id")
+            format_query_result(res3)
+
+            # 4) 列歧义（JOIN 不带前缀）
+            print("\n[用例4] 列歧义校验 (应失败)")
+            res4 = db.execute_sql("SELECT id FROM emp JOIN dept ON emp.dept_id = dept.id")
+            format_query_result(res4)
+
+        finally:
+            try:
+                db.flush_all()
+                db.close()
+            except Exception:
+                pass
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        self._mark_test_passed("语义分析集成")
     
     def test_edge_cases(self):
         """测试边界情况"""
@@ -447,7 +546,7 @@ def run_performance_test():
     
     print(f"✅ 性能测试完成")
     print(f"📊 处理1000行数据耗时: {execution_time:.3f} 秒")
-    print(f"📊 平均每行处理时间: {(execution_time/1000)*1000:.3f} 毫秒")
+    print(f"📊 平均每行处理时间: {(execution_time * 1000) / len(large_data['data']):.3f} 毫秒")
     
     if execution_time < 1.0:
         print("🎉 性能表现优秀！")
@@ -465,6 +564,7 @@ def main():
     print("- _format_select_result 函数") 
     print("- format_table_info 函数")
     print("- format_database_stats 函数")
+    print("- 语义分析集成测试")
     print("- 边界情况处理")
     print("- 集成场景测试")
     print("- 性能测试")
@@ -473,6 +573,9 @@ def main():
     # 运行测试
     tester = TestFormatter()
     tester.run_all_tests()
+    
+    # 运行语义分析集成测试
+    tester.test_semantic_integration()
     
     # 运行边界情况测试
     tester.test_edge_cases()
@@ -484,8 +587,8 @@ def main():
     run_performance_test()
     
     print("\n🎯 测试说明:")
-    print("- 此测试文件独立于数据库实例运行")
-    print("- 主要测试 formatter.py 中各个格式化函数的正确性")
+    print("- 此测试文件独立于数据库实例运行；语义分析集成测试会临时创建一个测试数据库文件")
+    print("- 主要测试 formatter.py 中各个格式化函数与语义分析整体效果")
     print("- 包含正常情况、边界情况和错误情况的测试")
     print("- 可以在shell运行时同时运行此测试")
 

@@ -74,6 +74,12 @@ class TokenType(Enum):
     TRUNCATE = "TRUNCATE"
     VIEW = "VIEW"
     AS = "AS"
+    # 新增：分组与排序
+    GROUP = "GROUP"
+    BY = "BY"
+    ORDER = "ORDER"
+    ASC = "ASC"
+    DESC = "DESC"
 
     # 布尔值
     TRUE = "TRUE"
@@ -179,6 +185,12 @@ class SQLLexer:
         "TRUNCATE": TokenType.TRUNCATE,
         "VIEW": TokenType.VIEW,
         "AS": TokenType.AS,
+        # 新增：分组与排序
+        "GROUP": TokenType.GROUP,
+        "BY": TokenType.BY,
+        "ORDER": TokenType.ORDER,
+        "ASC": TokenType.ASC,
+        "DESC": TokenType.DESC,
     }
 
     def __init__(self, sql: str):
