@@ -118,7 +118,7 @@ simple_database/
     ├── database.py          # 数据库主接口
     ├── shell.py             # 交互式Shell
     └── formatter.py         # 结果格式化
-└── logging/                  
+└── db_logging/                  
     ├── __init__.py
     ├── logger.py            # 核心日志器
     └── log_manager.py       # 日志管理器
@@ -158,8 +158,10 @@ BOOLEAN: 布尔值（0/1）
 开发环境设置
 bash
 复制
-# 只需要Python 3.7+，无额外依赖
+# 需要Python 3.7+
 python --version  
+## 安装环境依赖
+pip install prompt_toolkit
 
 ## 快速开始
 ```bash

@@ -20,7 +20,7 @@ class SimpleDatabase:
         self.db_file = db_file
 
         # 添加日志管理器初始化
-        from logging.log_manager import LogManager
+        from db_logging.log_manager import LogManager
 
         db_name = os.path.splitext(os.path.basename(db_file))[0]
         self.log_manager = LogManager(db_name)
@@ -70,6 +70,8 @@ class SimpleDatabase:
             ast = parser.parse()
 
             # 语义分析
+            auto_corrected = False
+            auto_hints = []
             try:
                 analyzed = self.semantic.analyze(ast)
                 ast_to_run = analyzed.ast
@@ -80,6 +82,8 @@ class SimpleDatabase:
                     try:
                         analyzed = self.semantic.analyze(corr.ast)
                         ast_to_run = analyzed.ast
+                        auto_corrected = True
+                        auto_hints = corr.hints or []
                     except SemanticError as se2:
                         return {"success": False, "error": str(se2), "message": f"语义错误: {str(se2)}", "hints": corr.hints, "data": []}
                 else:
@@ -87,6 +91,16 @@ class SimpleDatabase:
 
             # 执行SQL
             result = self.sql_executor.execute(ast_to_run)
+
+            # 标记与提示：若应用了自动纠错，则附加hints
+            if auto_corrected:
+                result["auto_corrected"] = True
+                if auto_hints:
+                    result["hints"] = auto_hints
+                # 追加消息说明
+                base_msg = result.get("message", "")
+                note = "（已应用智能纠错）"
+                result["message"] = (base_msg + note) if base_msg else "已应用智能纠错"
 
             # 记录SQL执行日志
             if self.log_manager:
@@ -267,7 +281,7 @@ class SimpleDatabase:
 
     def set_log_level(self, level: str) -> Dict[str, Any]:
         """设置日志级别"""
-        from logging.logger import LogLevel
+        from db_logging.logger import LogLevel
 
         level_mapping = {
             "DEBUG": LogLevel.DEBUG,

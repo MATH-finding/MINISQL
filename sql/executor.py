@@ -379,13 +379,10 @@ class SQLExecutor:
                 raise ValueError("未知的from_table类型")
 
         all_records, from_name = eval_from(stmt.from_table)
-        # print(f"[EXECUTOR DEBUG] _execute_select: source={from_name}, rows_scanned={len(all_records)}")
 
         # WHERE过滤
         filtered_records = []
         for record in all_records:
-            # 单表：record.data的key是裸字段名
-            # JOIN：record.data的key是带前缀
             context = record.data.copy()
             # 对于单表，去除所有表前缀（兼容视图嵌套）
             if isinstance(stmt.from_table, str):
@@ -403,10 +400,7 @@ class SQLExecutor:
             group_key_names: List[str] = []
             # 预先解析 group key 名称（按列名）
             for g in stmt.group_by:
-                if isinstance(g, ColumnRef):
-                    group_key_names.append(g.column_name)
-                else:
-                    group_key_names.append(str(g))
+                group_key_names.append(g.column_name if isinstance(g, ColumnRef) else str(g))
 
             def build_group_key(ctx: Dict[str, Any]) -> tuple:
                 keys = []
@@ -443,31 +437,39 @@ class SQLExecutor:
                                 if arg == "*":
                                     row_out["COUNT"] = len(rows)
                                 elif isinstance(arg, ColumnRef):
-                                    row_out["COUNT"] = sum(1 for r in rows if self._evaluate_expression(arg, r) is not None)
+                                    non_null = 0
+                                    for r in rows:
+                                        val = self._evaluate_expression(arg, r)
+                                        if val is not None:
+                                            non_null += 1
+                                    row_out["COUNT"] = non_null
                                 else:
                                     raise ValueError("COUNT参数不支持")
                             elif func == "SUM":
                                 if isinstance(arg, ColumnRef):
-                                    values = [self._evaluate_expression(arg, r) for r in rows]
-                                    row_out["SUM"] = sum(v for v in values if v is not None)
+                                    vals = [self._evaluate_expression(arg, r) for r in rows]
+                                    row_out["SUM"] = sum(v for v in vals if v is not None)
                                 else:
                                     raise ValueError("SUM参数不支持")
                             elif func == "AVG":
                                 if isinstance(arg, ColumnRef):
-                                    values = [self._evaluate_expression(arg, r) for r in rows if self._evaluate_expression(arg, r) is not None]
-                                    row_out["AVG"] = (sum(values) / len(values) if values else None)
+                                    vals = [self._evaluate_expression(arg, r) for r in rows]
+                                    vals = [v for v in vals if v is not None]
+                                    row_out["AVG"] = (sum(vals) / len(vals) if vals else None)
                                 else:
                                     raise ValueError("AVG参数不支持")
                             elif func == "MIN":
                                 if isinstance(arg, ColumnRef):
-                                    values = [self._evaluate_expression(arg, r) for r in rows if self._evaluate_expression(arg, r) is not None]
-                                    row_out["MIN"] = (min(values) if values else None)
+                                    vals = [self._evaluate_expression(arg, r) for r in rows]
+                                    vals = [v for v in vals if v is not None]
+                                    row_out["MIN"] = (min(vals) if vals else None)
                                 else:
                                     raise ValueError("MIN参数不支持")
                             elif func == "MAX":
                                 if isinstance(arg, ColumnRef):
-                                    values = [self._evaluate_expression(arg, r) for r in rows if self._evaluate_expression(arg, r) is not None]
-                                    row_out["MAX"] = (max(values) if values else None)
+                                    vals = [self._evaluate_expression(arg, r) for r in rows]
+                                    vals = [v for v in vals if v is not None]
+                                    row_out["MAX"] = (max(vals) if vals else None)
                                 else:
                                     raise ValueError("MAX参数不支持")
                             else:
@@ -504,18 +506,19 @@ class SQLExecutor:
                             if arg == "*":
                                 agg_result["COUNT"] = len(filtered_records)
                             elif isinstance(arg, ColumnRef):
-                                # 只统计非NULL
-                                agg_result["COUNT"] = sum(
-                                    1
-                                    for r in filtered_records
-                                    if self._evaluate_expression(arg, r.data) is not None
-                                )
+                                non_null = 0
+                                for r in filtered_records:
+                                    ctx = getattr(r, '_filtered_context', r.data)
+                                    val = self._evaluate_expression(arg, ctx)
+                                    if val is not None:
+                                        non_null += 1
+                                agg_result["COUNT"] = non_null
                             else:
                                 raise ValueError("COUNT参数不支持")
                         elif func == "SUM":
                             if isinstance(arg, ColumnRef):
                                 values = [
-                                    self._evaluate_expression(arg, r.data)
+                                    self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data))
                                     for r in filtered_records
                                 ]
                                 agg_result["SUM"] = sum(v for v in values if v is not None)
@@ -524,10 +527,10 @@ class SQLExecutor:
                         elif func == "AVG":
                             if isinstance(arg, ColumnRef):
                                 values = [
-                                    self._evaluate_expression(arg, r.data)
+                                    self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data))
                                     for r in filtered_records
-                                    if self._evaluate_expression(arg, r.data) is not None
                                 ]
+                                values = [v for v in values if v is not None]
                                 agg_result["AVG"] = (
                                     sum(values) / len(values) if values else None
                                 )
@@ -536,20 +539,20 @@ class SQLExecutor:
                         elif func == "MIN":
                             if isinstance(arg, ColumnRef):
                                 values = [
-                                    self._evaluate_expression(arg, r.data)
+                                    self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data))
                                     for r in filtered_records
-                                    if self._evaluate_expression(arg, r.data) is not None
                                 ]
+                                values = [v for v in values if v is not None]
                                 agg_result["MIN"] = min(values) if values else None
                             else:
                                 raise ValueError("MIN参数不支持")
                         elif func == "MAX":
                             if isinstance(arg, ColumnRef):
                                 values = [
-                                    self._evaluate_expression(arg, r.data)
+                                    self._evaluate_expression(arg, getattr(r, '_filtered_context', r.data))
                                     for r in filtered_records
-                                    if self._evaluate_expression(arg, r.data) is not None
                                 ]
+                                values = [v for v in values if v is not None]
                                 agg_result["MAX"] = max(values) if values else None
                             else:
                                 raise ValueError("MAX参数不支持")
@@ -589,13 +592,7 @@ class SQLExecutor:
                                     elif len(matches) == 0:
                                         raise ValueError(f"列 {col_name} 不存在")
                                     else:
-                                        raise ValueError(
-                                            f"列 {col.column_name} 不明确，请加表前缀"
-                                        )
-                                    if key in record.data:
-                                        selected_data[col.column_name] = record.data[key]
-                                    else:
-                                        raise ValueError(f"列 {key} 不存在")
+                                        raise ValueError(f"列 {col.column_name} 不明确，请加表前缀")
                             elif isinstance(col, AggregateFunction):
                                 raise ValueError("聚合函数只能单独出现在SELECT列表中")
                             else:

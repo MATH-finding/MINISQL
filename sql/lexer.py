@@ -214,7 +214,7 @@ class SQLLexer:
 
             if char.isalpha() or char == "_":
                 self._read_identifier_or_keyword()
-            elif char.isdigit():
+            elif char.isdigit() or (char == "-" and self._lookahead_is_digit()):
                 self._read_number()
             elif char in ("'", '"'):
                 self._read_string(char)
@@ -262,6 +262,9 @@ class SQLLexer:
                 self.column += 1
             self.position += 1
 
+    def _lookahead_is_digit(self) -> bool:
+        return (self.position + 1 < len(self.sql)) and self.sql[self.position + 1].isdigit()
+
     def _read_identifier_or_keyword(self):
         """读取标识符或关键字"""
         start = self.position
@@ -279,10 +282,15 @@ class SQLLexer:
         self.tokens.append(token)
 
     def _read_number(self):
-        """读取数字（整数或浮点数）"""
+        """读取数字（整数或浮点数），支持可选的负号"""
         start = self.position
         start_column = self.column
         has_dot = False
+
+        # 处理可选的前导负号
+        if self.sql[self.position] == "-":
+            self.position += 1
+            self.column += 1
 
         while self.position < len(self.sql):
             char = self.sql[self.position]

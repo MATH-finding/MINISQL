@@ -184,7 +184,8 @@ class SQLParser:
             elif self.current_token.type == TokenType.CHECK:
                 self._advance()
                 self._expect(TokenType.LEFT_PAREN)
-                check = self._parse_expression()
+                # 使用 WHERE 表达式解析，以支持比较/逻辑表达式
+                check = self._parse_where_expression()
                 self._expect(TokenType.RIGHT_PAREN)
             elif self.current_token.type == TokenType.FOREIGN:
                 self._advance()
