@@ -7,17 +7,193 @@ import pickle
 from storage import BufferManager, PageManager
 from .data_types import ColumnDefinition
 from .schema import TableSchema
+import hashlib
+from typing import Set
+
+import hashlib
+import time
+from typing import Set
 
 
 class SystemCatalog:
     def __init__(self, buffer_manager: BufferManager):
         self.buffer_manager = buffer_manager
         self.tables: Dict[str, TableSchema] = {}
-        self.table_pages: Dict[str, List[int]] = {}  # 表名 -> 页面列表
-        self.catalog_page_id = 0  # 系统目录页面
-        # 视图元数据：view_name -> view_definition
-        self.views = {}  # 内存实现，生产环境可用表实现
+        self.table_pages: Dict[str, List[int]] = {}
+        self.catalog_page_id = 0
+        self.views = {}
+
+        # 用户和权限管理
+        self.users: Dict[str, dict] = {}  # username -> {password_hash, created_at}
+        self.privileges: Dict[str, Dict[str, Set[str]]] = (
+            {}
+        )  # username -> {table_name -> {privileges}}
+
         self._load_catalog()
+        self._init_default_admin()
+
+    def _init_default_admin(self):
+        """初始化默认管理员账户"""
+        if "admin" not in self.users:
+            self.create_user("admin", "admin123")
+            # 给管理员所有权限
+            self.privileges["admin"] = {"*": {"ALL"}}
+
+    def create_user(self, username: str, password: str) -> bool:
+        """创建用户"""
+        if username in self.users:
+            return False
+
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        self.users[username] = {
+            "password_hash": password_hash,
+            "created_at": time.time(),
+        }
+        self.privileges[username] = {}
+        self._save_catalog()
+        return True
+
+    def drop_user(self, username: str) -> bool:
+        """删除用户"""
+        if username not in self.users or username == "admin":  # 保护管理员账户
+            return False
+
+        del self.users[username]
+        if username in self.privileges:
+            del self.privileges[username]
+        self._save_catalog()
+        return True
+
+    def authenticate_user(self, username: str, password: str) -> bool:
+        """用户认证"""
+        if username not in self.users:
+            return False
+
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        return self.users[username]["password_hash"] == password_hash
+
+    def grant_privilege(self, username: str, table_name: str, privilege: str) -> bool:
+        """授予权限"""
+        if username not in self.users:
+            return False
+
+        if username not in self.privileges:
+            self.privileges[username] = {}
+
+        if table_name not in self.privileges[username]:
+            self.privileges[username][table_name] = set()
+
+        if privilege == "ALL":
+            self.privileges[username][table_name] = {
+                "SELECT",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "CREATE",
+                "DROP",
+            }
+        else:
+            self.privileges[username][table_name].add(privilege)
+
+        self._save_catalog()
+        return True
+
+    def revoke_privilege(self, username: str, table_name: str, privilege: str) -> bool:
+        """撤销权限"""
+        if username not in self.users or username not in self.privileges:
+            return False
+
+        if table_name not in self.privileges[username]:
+            return False
+
+        if privilege == "ALL":
+            self.privileges[username][table_name] = set()
+        else:
+            self.privileges[username][table_name].discard(privilege)
+
+        self._save_catalog()
+        return True
+
+    def check_privilege(self, username: str, table_name: str, privilege: str) -> bool:
+        """检查用户权限"""
+        if username not in self.users:
+            return False
+
+        # 管理员拥有所有权限
+        if username == "admin":
+            return True
+
+        if username not in self.privileges:
+            return False
+
+        # 检查通配符权限
+        if "*" in self.privileges[username] and "ALL" in self.privileges[username]["*"]:
+            return True
+
+        # 检查具体表权限
+        if table_name in self.privileges[username]:
+            user_privileges = self.privileges[username][table_name]
+            return privilege in user_privileges or "ALL" in user_privileges
+
+        return False
+
+    def list_users(self) -> List[str]:
+        """列出所有用户"""
+        return list(self.users.keys())
+
+    def get_user_privileges(self, username: str) -> Dict[str, Set[str]]:
+        """获取用户权限"""
+        return self.privileges.get(username, {})
+
+    def _save_catalog(self):
+        """保存系统目录到磁盘"""
+        catalog_data = {
+            "tables": self.tables,
+            "table_pages": self.table_pages,
+            "users": self.users,
+            "privileges": {
+                username: {table: list(privs) for table, privs in user_privs.items()}
+                for username, user_privs in self.privileges.items()
+            },
+        }
+        catalog_bytes = pickle.dumps(catalog_data)
+
+        page = self.buffer_manager.get_page(self.catalog_page_id)
+        try:
+            if len(catalog_bytes) + 4 > page.PAGE_SIZE:
+                raise RuntimeError("系统目录太大，无法存储在单个页面中")
+
+            page.write_int(0, len(catalog_bytes))
+            page.write_bytes(4, catalog_bytes)
+        finally:
+            self.buffer_manager.unpin_page(self.catalog_page_id, True)
+
+    def _load_catalog(self):
+        """从磁盘加载系统目录"""
+        try:
+            page = self.buffer_manager.get_page(self.catalog_page_id)
+            try:
+                data_length = page.read_int(0)
+                if data_length > 0:
+                    catalog_bytes = page.read_bytes(4, data_length)
+                    catalog_data = pickle.loads(catalog_bytes)
+
+                    self.tables = catalog_data.get("tables", {})
+                    self.table_pages = catalog_data.get("table_pages", {})
+                    self.users = catalog_data.get("users", {})
+
+                    # 转换权限数据结构
+                    privileges_data = catalog_data.get("privileges", {})
+                    self.privileges = {
+                        username: {
+                            table: set(privs) for table, privs in user_privs.items()
+                        }
+                        for username, user_privs in privileges_data.items()
+                    }
+            finally:
+                self.buffer_manager.unpin_page(self.catalog_page_id, False)
+        except:
+            self._create_empty_catalog()
 
     def _load_catalog(self):
         """从磁盘加载系统目录"""

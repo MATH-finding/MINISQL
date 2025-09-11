@@ -174,7 +174,6 @@ class TableManager:
 
         return updated_count
 
-
     def insert_record_with_location(self, table_name: str, record_data: Dict[str, Any]) -> Optional[tuple[int, int]]:
         """插入记录并返回 (page_id, record_index)；失败返回 None。"""
         schema = self.catalog.get_table_schema(table_name)
@@ -223,4 +222,3 @@ class TableManager:
         """按位置更新一条记录。"""
         new_record = Record(new_data)
         return self.record_manager.update_record(page_id, record_index, new_record)
-

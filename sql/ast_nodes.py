@@ -145,74 +145,6 @@ class SelectStatement(Statement):
         return result
 
 
-# sql/ast_nodes.py 中添加
-class CreateIndexNode(ASTNode):
-    """创建索引AST节点"""
-
-    def __init__(
-        self,
-        index_name: str,
-        table_name: str,
-        column_name: str,
-        is_unique: bool = False,
-    ):
-        self.index_name = index_name
-        self.table_name = table_name
-        self.column_name = column_name
-        self.is_unique = is_unique
-
-
-class DropIndexNode(ASTNode):
-    """删除索引AST节点"""
-
-    def __init__(self, index_name: str):
-        self.index_name = index_name
-
-
-class CreateIndexStatement(Statement):
-    """CREATE INDEX语句"""
-
-    def __init__(
-        self,
-        index_name: str,
-        table_name: str,
-        column_name: str,
-        is_unique: bool = False,
-    ):
-        self.index_name = index_name
-        self.table_name = table_name
-        self.column_name = column_name
-        self.is_unique = is_unique
-
-
-class DropIndexStatement(Statement):
-    """DROP INDEX语句"""
-
-    def __init__(self, index_name: str):
-        self.index_name = index_name
-
-
-class JoinClause(ASTNode):
-    """
-    JOIN子句AST节点
-    left: 左表（表名str或JoinClause）
-    right: 右表（表名str）
-    join_type: 连接类型（如'INNER', 'LEFT'等）
-    on: 连接条件（Expression）
-    """
-
-    def __init__(
-        self, left: Union[str, "JoinClause"], right: str, join_type: str, on: Expression
-    ):
-        self.left = left
-        self.right = right
-        self.join_type = join_type  # 'INNER', 'LEFT', ...
-        self.on = on
-
-    def __repr__(self):
-        return f"({self.left} {self.join_type} JOIN {self.right} ON {self.on})"
-
-
 class UpdateStatement(Statement):
     """UPDATE 语句"""
 
@@ -270,11 +202,82 @@ class TruncateTableStatement(Statement):
         return f"TRUNCATE TABLE {self.table_name}"
 
 
+# 索引相关语句
+class CreateIndexNode(ASTNode):
+    """创建索引AST节点"""
+
+    def __init__(
+        self,
+        index_name: str,
+        table_name: str,
+        column_name: str,
+        is_unique: bool = False,
+    ):
+        self.index_name = index_name
+        self.table_name = table_name
+        self.column_name = column_name
+        self.is_unique = is_unique
+
+
+class DropIndexNode(ASTNode):
+    """删除索引AST节点"""
+
+    def __init__(self, index_name: str):
+        self.index_name = index_name
+
+
+class CreateIndexStatement(Statement):
+    """CREATE INDEX语句"""
+
+    def __init__(
+        self,
+        index_name: str,
+        table_name: str,
+        column_name: str,
+        is_unique: bool = False,
+    ):
+        self.index_name = index_name
+        self.table_name = table_name
+        self.column_name = column_name
+        self.is_unique = is_unique
+
+
+class DropIndexStatement(Statement):
+    """DROP INDEX语句"""
+
+    def __init__(self, index_name: str):
+        self.index_name = index_name
+
+
+# JOIN相关
+class JoinClause(ASTNode):
+    """
+    JOIN子句AST节点
+    left: 左表（表名str或JoinClause）
+    right: 右表（表名str）
+    join_type: 连接类型（如'INNER', 'LEFT'等）
+    on: 连接条件（Expression）
+    """
+
+    def __init__(
+        self, left: Union[str, "JoinClause"], right: str, join_type: str, on: Expression
+    ):
+        self.left = left
+        self.right = right
+        self.join_type = join_type  # 'INNER', 'LEFT', ...
+        self.on = on
+
+    def __repr__(self):
+        return f"({self.left} {self.join_type} JOIN {self.right} ON {self.on})"
+
+
+# 视图相关语句
 class CreateViewStatement(Statement):
     def __init__(self, view_name: str, view_definition: str):
         self.view_name = view_name
         self.view_definition = view_definition
         # print(f"[AST DEBUG] CreateViewStatement created: view_name={view_name}, definition=\"{view_definition}\"")
+
 
 class DropViewStatement(Statement):
     def __init__(self, view_name: str):
@@ -282,6 +285,54 @@ class DropViewStatement(Statement):
         # print(f"[AST DEBUG] DropViewStatement created: view_name={view_name}")
 
 
+# 用户管理语句
+class CreateUserStatement(Statement):
+    """CREATE USER 语句"""
+
+    def __init__(self, username: str, password: str):
+        self.username = username
+        self.password = password
+
+    def __repr__(self):
+        return f"CREATE USER {self.username} IDENTIFIED BY '***'"
+
+
+class DropUserStatement(Statement):
+    """DROP USER 语句"""
+
+    def __init__(self, username: str):
+        self.username = username
+
+    def __repr__(self):
+        return f"DROP USER {self.username}"
+
+
+# 权限管理语句
+class GrantStatement(Statement):
+    """GRANT 语句"""
+
+    def __init__(self, privilege: str, table_name: str, username: str):
+        self.privilege = privilege  # SELECT, INSERT, UPDATE, DELETE, ALL
+        self.table_name = table_name
+        self.username = username
+
+    def __repr__(self):
+        return f"GRANT {self.privilege} ON {self.table_name} TO {self.username}"
+
+
+class RevokeStatement(Statement):
+    """REVOKE 语句"""
+
+    def __init__(self, privilege: str, table_name: str, username: str):
+        self.privilege = privilege
+        self.table_name = table_name
+        self.username = username
+
+    def __repr__(self):
+        return f"REVOKE {self.privilege} ON {self.table_name} FROM {self.username}"
+
+
+# 事务相关语句
 class BeginTransaction(Statement):
     """BEGIN 或 START TRANSACTION"""
 
@@ -322,4 +373,3 @@ class SetIsolationLevel(Statement):
 
     def __repr__(self):
         return f"SET SESSION TRANSACTION ISOLATION LEVEL {self.level}"
-

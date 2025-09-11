@@ -20,6 +20,11 @@ class SQLShell:
         print("=" * 60)
         print("🗄️  欢迎使用简化版数据库系统 SQL Shell")
         print("=" * 60)
+
+        # 登录流程
+        if not self._login():
+            return
+
         print("输入 'help' 查看帮助，输入 'quit' 或 'exit' 退出")
         print()
 
@@ -29,53 +34,84 @@ class SQLShell:
                 if user_input:
                     self._process_command(user_input)
             except KeyboardInterrupt:
-                print("\n正在保存数据...")
-                try:
-                    self.database.flush_all()
-                    print("💾 数据已保存，再见！")
-                except Exception as e:
-                    print(f"⚠️ 保存数据时出错: {e}")
+                self._safe_exit()
                 break
             except EOFError:
-                print("\n正在保存数据...")
-                try:
-                    self.database.flush_all()
-                    print("💾 数据已保存，再见！")
-                except Exception as e:
-                    print(f"⚠️ 保存数据时出错: {e}")
+                self._safe_exit()
                 break
 
-    def _get_input(self) -> Optional[str]:
-        """获取用户输入"""
-        try:
-            line = input("SQL> ").strip()
+    def _login(self) -> bool:
+        """登录流程"""
+        print("请登录数据库系统:")
+        max_attempts = 3
+        attempts = 0
 
-            # 处理多行输入
-            if line and not line.endswith(";"):
-                lines = [line]
-                while True:
-                    continuation = input("...> ").strip()
-                    if not continuation:
-                        break
-                    lines.append(continuation)
-                    if continuation.endswith(";"):
-                        break
-                line = " ".join(lines)
+        while attempts < max_attempts:
+            try:
+                username = input("用户名: ").strip()
+                if not username:
+                    print("用户名不能为空")
+                    continue
 
-            return line
-        except:
-            return None
+                import getpass
+
+                password = getpass.getpass("密码: ")
+
+                result = self.database.login(username, password)
+                if result["success"]:
+                    print(f"✅ {result['message']}")
+                    return True
+                else:
+                    attempts += 1
+                    print(f"❌ {result['message']}")
+                    if attempts < max_attempts:
+                        print(f"还有 {max_attempts - attempts} 次机会")
+
+            except KeyboardInterrupt:
+                print("\n登录已取消")
+                return False
+
+        print("登录失败次数过多，程序退出")
+        return False
 
     def _process_command(self, command: str):
-        """处理命令"""
+        """处理命令 - 添加用户管理命令"""
         command = command.strip()
-
         if not command:
             return
 
-        # 新增：显示所有视图
+        # 用户管理命令
+        if command.lower() == "users":
+            self._show_users()
+            return
+
+        if command.lower().startswith("show privileges "):
+            username = command.split()[2]
+            self._show_user_privileges(username)
+            return
+
+        if command.lower() == "whoami":
+            current_user = self.database.get_current_user()
+            print(f"当前登录用户: {current_user}")
+            return
+
+        if command.lower() == "logout":
+            result = self.database.logout()
+            print(f"✅ {result['message']}")
+            # 重新登录
+            if self._login():
+                return
+            else:
+                self.running = False
+                return
+
+        # 视图管理命令
         if command.lower() in ("views", "show views"):
-            views = self.database.list_views() if hasattr(self.database, "list_views") else []
+            views = (
+                self.database.list_views()
+                if hasattr(self.database, "list_views")
+                else []
+            )
             if not views:
                 print("数据库中没有视图")
             else:
@@ -84,7 +120,6 @@ class SQLShell:
                     print(f"  👁️  {view}")
             return
 
-        # 新增：显示视图定义
         if command.lower().startswith("describe view "):
             view_name = command.split()[2]
             if hasattr(self.database, "get_view_definition"):
@@ -97,7 +132,6 @@ class SQLShell:
                 print("当前数据库不支持视图定义查询")
             return
 
-        # 新增：别名 - show view <name> （与 describe view 等价）
         if command.lower().startswith("show view "):
             parts = command.split()
             if len(parts) >= 3:
@@ -105,14 +139,13 @@ class SQLShell:
                 self._process_command(alias)
                 return
 
-        # 新增：删除视图
         if command.lower().startswith("drop view "):
             view_name = command.split()[2]
             result = self.database.execute_sql(f"DROP VIEW {view_name}")
             format_query_result(result)
             return
 
-        # 会话管理命令（以反斜杠开头）
+        # 会话管理命令
         if command.startswith("\\session"):
             parts = command.split()
             if len(parts) == 1 or parts[1] == "list":
@@ -142,7 +175,7 @@ class SQLShell:
                 print("用法: \\session [list|new|use <id>]")
                 return
 
-        # 内置命令
+        # 系统控制命令
         if command.lower() in ("quit", "exit"):
             print("正在保存数据...")
             try:
@@ -157,7 +190,6 @@ class SQLShell:
             self._show_help()
             return
 
-        # 新增：帮助子命令，不影响原有 help
         if command.lower() == "help sql":
             self._show_help_sql()
             return
@@ -165,6 +197,11 @@ class SQLShell:
             self._show_help_views()
             return
 
+        if command.lower() == "clear":
+            print("\033[2J\033[H", end="")  # 清屏
+            return
+
+        # 数据库查询命令
         if command.lower() == "tables":
             self._show_tables()
             return
@@ -176,7 +213,6 @@ class SQLShell:
             self._describe_table(table_name)
             return
 
-        # show table_name 命令
         if command.lower().startswith("show "):
             parts = command.split()
             if len(parts) >= 2:
@@ -194,7 +230,7 @@ class SQLShell:
             self._show_stats()
             return
 
-        # 新增：视图与约束演示命令
+        # 演示命令
         if command.lower() == "demo views":
             self._demo_views()
             return
@@ -202,7 +238,7 @@ class SQLShell:
             self._demo_constraints()
             return
 
-        # 新增：日志相关命令
+        # 日志和缓存命令
         if command.lower().startswith("log level "):
             level = command.split()[2] if len(command.split()) > 2 else ""
             self._set_log_level(level)
@@ -216,23 +252,23 @@ class SQLShell:
             self._show_cache_stats()
             return
 
-        if command.lower() == "clear":
-            print("\033[2J\033[H", end="")  # 清屏
-            return
-
-        # SQL命令
+        # SQL语句处理
         if command.endswith(";"):
             command = command[:-1]  # 移除分号
 
         print()  # 空行
         result = self.database.execute_sql(command)
         format_query_result(result)
-        # 新增：调试信息输出
-        if "DEBUG" in result.get("message", "") or "debug" in result.get("message", "").lower():
+
+        # 调试信息输出
+        if (
+            "DEBUG" in result.get("message", "")
+            or "debug" in result.get("message", "").lower()
+        ):
             print("[调试信息]", result.get("message"))
         print()  # 空行
 
-        # 对于修改数据的操作，事务中或 autocommit=0 时不强制保存（保持原逻辑）
+        # 智能保存逻辑（保留事务支持）
         upper = command.upper()
         if upper.startswith(("CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
             try:
@@ -244,10 +280,20 @@ class SQLShell:
                 autocommit = True
             if autocommit and not in_txn:
                 self.database.flush_all()
-        # 对于所有可能修改数据的操作，都强制保存（保留原逻辑）
+
+        # 对于用户管理命令，强制保存
         if any(
             command.upper().startswith(cmd)
-            for cmd in ["CREATE", "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE"]
+            for cmd in [
+                "CREATE",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "DROP",
+                "TRUNCATE",
+                "GRANT",
+                "REVOKE",
+            ]
         ):
             try:
                 self.database.flush_all()
@@ -268,6 +314,37 @@ class SQLShell:
                 print(f"❌ 错误: {result.get('message', '未知错误')}")
         except Exception as e:
             print(f"❌ 查询表数据时出错: {e}")
+
+    def _show_users(self):
+        """显示所有用户"""
+        users = self.database.catalog.list_users()
+        if not users:
+            print("数据库中没有用户")
+        else:
+            print(f"数据库用户 ({len(users)} 个):")
+            for user in users:
+                print(f"  👤 {user}")
+
+    def _show_user_privileges(self, username: str):
+        """显示用户权限"""
+        privileges = self.database.catalog.get_user_privileges(username)
+        if not privileges:
+            print(f"用户 {username} 没有任何权限")
+        else:
+            print(f"用户 {username} 的权限:")
+            for table, privs in privileges.items():
+                privs_str = ", ".join(privs)
+                print(f"  📋 {table}: {privs_str}")
+
+    def _safe_exit(self):
+        """安全退出"""
+        print("\n正在保存数据...")
+        try:
+            self.database.flush_all()
+            self.database.logout()
+            print("💾 数据已保存，再见！")
+        except Exception as e:
+            print(f"⚠️ 保存数据时出错: {e}")
 
     # 新增：SQL 帮助
     def _show_help_sql(self):
@@ -314,7 +391,7 @@ class SQLShell:
             "DROP VIEW adult_users",
             "DELETE FROM users",
         ]
-         # 调试：列出当前表
+        # 调试：列出当前表
         try:
             if hasattr(self.database, "list_tables"):
                 tbls = self.database.list_tables() or []
@@ -338,7 +415,7 @@ class SQLShell:
                     resx = self.database.execute_sql(sql)
                     print(f"SQL> {sql}")
                     format_query_result(resx)
-                    
+
                     # 调试：再验计数
                     try:
                         chk2 = self.database.execute_sql("SELECT COUNT(*) FROM users")
@@ -349,7 +426,7 @@ class SQLShell:
 
         except Exception as e:
             print("    预清理(users)检查失败，可忽略:", e)
-        
+
         steps = [
             "DROP VIEW alice_only",
             "DROP VIEW adult_users",
@@ -404,7 +481,12 @@ class SQLShell:
                     except Exception as ee:
                         print(f"    无法清空表 users: {ee}")
         # 清理
-        for sql in ["DROP VIEW alice_only", "DROP VIEW adult_users", "DELETE FROM users", "DROP TABLE users"]:
+        for sql in [
+            "DROP VIEW alice_only",
+            "DROP VIEW adult_users",
+            "DELETE FROM users",
+            "DROP TABLE users",
+        ]:
             try:
                 res = self.database.execute_sql(sql)
                 print(f"SQL> {sql}")
@@ -547,31 +629,42 @@ class SQLShell:
             print(f"❌ 获取缓存统计失败: {e}")
 
     def _show_help(self):
-        """显示帮助信息"""
+        """显示帮助信息 - 添加用户管理帮助"""
         print(
             """
 📚 MiniSQL 命令帮助
 
+👤 用户管理:
+CREATE USER username IDENTIFIED BY 'password'        - 创建用户
+DROP USER username                                   - 删除用户
+GRANT privilege ON table TO user                     - 授权
+REVOKE privilege ON table FROM user                  - 撤权
+users                                               - 列出所有用户
+show privileges username                            - 查看用户权限
+whoami                                             - 显示当前用户
+logout                                             - 登出并重新登录
+
+🔐 权限类型:
+SELECT, INSERT, UPDATE, DELETE                      - 数据操作权限
+CREATE, DROP                                        - 结构操作权限
+ALL                                                 - 所有权限
+
+💡 示例:
+CREATE USER alice IDENTIFIED BY 'password123';
+GRANT SELECT ON users TO alice;
+GRANT ALL ON products TO alice;
+REVOKE INSERT ON products FROM alice;
+
 📋 SQL语句:
 CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
-DROP TABLE table_name                                - 删除表（包括结构和数据）
 INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
 SELECT columns FROM table_name [WHERE condition]     - 查询数据
 UPDATE table_name SET col=val [WHERE condition]      - 更新数据
 DELETE FROM table_name [WHERE condition]             - 删除数据
+DROP TABLE table_name                                - 删除表（包括结构和数据）
 TRUNCATE TABLE table_name                            - 快速清空表数据（保留结构）
-
-🔄 事务管理:
-BEGIN | START TRANSACTION                            - 开启事务
-COMMIT                                               - 提交事务
-ROLLBACK                                             - 回滚事务（当前未实现）
-SET AUTOCOMMIT = 0|1                                 - 设置自动提交
-SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
-
-🧭 会话管理:
-\\session list                                       - 列出会话
-\\session new                                        - 新建会话
-\\session use <id>                                   - 切换会话
+GROUP BY col1, col2                                  - 分组聚合
+ORDER BY col [ASC|DESC], col2 [ASC|DESC]             - 排序
 
 🔍 索引操作:
 CREATE INDEX index_name ON table_name (column)       - 创建索引
@@ -595,7 +688,9 @@ cache stats                - 显示详细缓存统计信息
 
 🛠️ 其他命令:
 help, ?                    - 显示此帮助
-clear                      - 清屏
+tables                     - 列出所有表
+describe <table>           - 查看表结构
+stats                      - 显示数据库统计信息
 quit, exit                 - 退出Shell
 
 💡 数据类型:
@@ -629,21 +724,7 @@ DELETE FROM      - 逐行删除数据，可加WHERE条件，相对较慢
 
 👁️ 视图提示:
 提示: 输入 'help views' 查看视图命令说明；输入 'demo views' 可运行视图演示
-
-
-💡 示例:
-CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50) NOT NULL);
-INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
-show users                           -- 查看表数据
-UPDATE users SET name = 'NewName' WHERE id = 1;
-DELETE FROM users WHERE id = 2;
-TRUNCATE TABLE users;                -- 清空所有数据但保留表结构
-DROP TABLE users;                    -- 完全删除表
-CREATE INDEX idx_user_id ON users (id);
-log level DEBUG                      -- 设置调试级别日志
-cache stats                          -- 查看缓存详情
-
-        """
+       """
         )
 
     def _show_tables(self):
@@ -695,6 +776,48 @@ cache stats                          -- 查看缓存详情
         """显示数据库统计信息"""
         stats = self.database.get_database_stats()
         format_database_stats(stats)
+
+    def _get_input(self) -> Optional[str]:
+        """获取用户输入 - 显示当前用户并支持多行输入"""
+        try:
+            # 获取当前用户，显示在提示符中
+            current_user = self.database.get_current_user()
+            prompt = f"[{current_user}]SQL> " if current_user else "SQL> "
+
+            # 获取第一行输入
+            line = input(prompt).strip()
+
+            # 如果输入为空，直接返回
+            if not line:
+                return line
+
+            # 处理多行输入 - 如果没有分号结尾，继续读取
+            if line and not line.endswith(";"):
+                lines = [line]
+                while True:
+                    try:
+                        continuation = input("...> ").strip()
+                        if not continuation:
+                            # 空行表示结束输入
+                            break
+                        lines.append(continuation)
+                        if continuation.endswith(";"):
+                            # 遇到分号结束
+                            break
+                    except (KeyboardInterrupt, EOFError):
+                        # 用户取消输入
+                        break
+                line = " ".join(lines)
+
+            return line
+
+        except (KeyboardInterrupt, EOFError):
+            # 用户按 Ctrl+C 或 Ctrl+D
+            return None
+        except Exception as e:
+            # 其他异常情况
+            print(f"输入错误: {e}")
+            return None
 
 
 def interactive_sql_shell(database: SimpleDatabase):
