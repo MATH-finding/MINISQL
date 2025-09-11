@@ -280,3 +280,46 @@ class DropViewStatement(Statement):
     def __init__(self, view_name: str):
         self.view_name = view_name
         # print(f"[AST DEBUG] DropViewStatement created: view_name={view_name}")
+
+
+class BeginTransaction(Statement):
+    """BEGIN 或 START TRANSACTION"""
+
+    def __repr__(self):
+        return "BEGIN"
+
+
+class CommitTransaction(Statement):
+    """COMMIT"""
+
+    def __repr__(self):
+        return "COMMIT"
+
+
+class RollbackTransaction(Statement):
+    """ROLLBACK（当前不实现实际回滚）"""
+
+    def __repr__(self):
+        return "ROLLBACK"
+
+
+class SetAutocommit(Statement):
+    """SET AUTOCOMMIT = 0|1"""
+
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+
+    def __repr__(self):
+        return f"SET AUTOCOMMIT = {1 if self.enabled else 0}"
+
+
+class SetIsolationLevel(Statement):
+    """SET SESSION TRANSACTION ISOLATION LEVEL ..."""
+
+    def __init__(self, level: str):
+        # level ∈ {READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE}
+        self.level = level
+
+    def __repr__(self):
+        return f"SET SESSION TRANSACTION ISOLATION LEVEL {self.level}"
+
