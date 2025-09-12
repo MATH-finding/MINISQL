@@ -118,6 +118,8 @@ simple_database/
     ├── database.py          # 数据库主接口
     ├── shell.py             # 交互式Shell
     └── formatter.py         # 结果格式化
+│   ├── web_api.py          # 新增：Flask Web API
+
 └── db_logging/                  
     ├── __init__.py
     ├── logger.py            # 核心日志器

@@ -4,6 +4,7 @@
 """
 
 from interface import SimpleDatabase, interactive_sql_shell, format_query_result
+from interface.web_api import DatabaseWebAPI
 import sys
 import os
 
@@ -210,6 +211,21 @@ def run_demo_with_indexes():
             print("🗑️  演示文件已清理")
 
 
+def run_web_server():
+    """启动Web服务器"""
+    from interface.web_api import DatabaseWebAPI
+
+    # 获取命令行参数
+    db_file = sys.argv[2] if len(sys.argv) > 2 else "web.db"
+    port = int(sys.argv[3]) if len(sys.argv) > 3 else 5000
+
+    web_api = DatabaseWebAPI(db_file)
+
+    try:
+        web_api.run(host='0.0.0.0', port=port, debug=False)
+    finally:
+        web_api.close_all_connections()
+
 # 修改main函数，添加新的演示选项
 def main():
     """主程序"""
@@ -234,6 +250,9 @@ def main():
             finally:
                 db.close()
             return
+        elif command == "web":
+            run_web_server()
+            return
 
     # 显示使用说明
     print("🗄️  简化版数据库系统")
@@ -249,6 +268,7 @@ def main():
     print("  python main.py demo")
     print("  python main.py demo-index")  # 新增
     print("  python main.py shell mydb.db")
+    print("  python main.py web [db_file] [port]  # 启动Web服务器")
 
 
 if __name__ == "__main__":
