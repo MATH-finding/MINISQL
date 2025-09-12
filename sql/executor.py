@@ -10,9 +10,121 @@ from table import TableManager
 from .ast_nodes import *
 
 
+class TableLockManager:
+    """表级S/X锁（进程内共享，非阻塞，冲突时报错）。"""
+
+    _read_locks: Dict[str, set] = {}
+    _write_locks: Dict[str, Optional[int]] = {}
+
+    @classmethod
+    def acquire_shared(cls, table: str, session_id: int):
+        writer = cls._write_locks.get(table)
+        if writer and writer != session_id:
+            raise ValueError(f"表 {table} 存在写锁，读锁获取失败")
+        readers = cls._read_locks.setdefault(table, set())
+        readers.add(session_id)
+
+    @classmethod
+    def acquire_exclusive(cls, table: str, session_id: int):
+        writer = cls._write_locks.get(table)
+        readers = cls._read_locks.get(table, set())
+        if (writer and writer != session_id) or any(r != session_id for r in readers):
+            raise ValueError(f"表 {table} 存在冲突锁，写锁获取失败")
+        cls._write_locks[table] = session_id
+
+    @classmethod
+    def release_all_for_session(cls, session_id: int):
+        # 释放读锁
+        for table, readers in list(cls._read_locks.items()):
+            if session_id in readers:
+                readers.discard(session_id)
+                if not readers:
+                    cls._read_locks.pop(table, None)
+        # 释放写锁
+        for table, writer in list(cls._write_locks.items()):
+            if writer == session_id:
+                cls._write_locks.pop(table, None)
+
+
+class TransactionManager:
+    """MySQL风格的极简事务管理（支持回滚）：autocommit 与显式事务。"""
+
+    def __init__(self):
+        self._autocommit: bool = True
+        self._in_txn: bool = False
+        self._next_txn_id: int = 1
+        self._current_txn_id: Optional[int] = None
+        self._isolation_level: str = "READ COMMITTED"
+        # REPEATABLE READ 快照：table -> List[dict]
+        self._rr_snapshot: Dict[str, List[Dict[str, Any]]] = {}
+
+    def set_autocommit(self, enabled: bool):
+        # MySQL: SET autocommit=0 开启事务性上下文；=1 退出并隐式提交当前事务
+        if enabled and self._in_txn:
+            # 切换为autocommit=1时，隐式提交
+            self.commit()
+        self._autocommit = enabled
+        # autocommit切换后清理快照
+        if self._autocommit:
+            self._rr_snapshot.clear()
+
+    def autocommit(self) -> bool:
+        return self._autocommit
+
+    def begin(self) -> int:
+        if self._in_txn:
+            # MySQL 多次BEGIN通常报错或忽略，这里报错
+            raise ValueError("已在事务中")
+        self._in_txn = True
+        self._current_txn_id = self._next_txn_id
+        self._next_txn_id += 1
+        # 新事务清空快照
+        self._rr_snapshot.clear()
+        return self._current_txn_id
+
+    def commit(self):
+        if not self._in_txn:
+            # COMMIT 在非事务中为 no-op；为了明确，这里也允许静默成功
+            return
+        # TODO: 这里可集成WAL fsync
+        self._in_txn = False
+        self._current_txn_id = None
+        self._rr_snapshot.clear()
+
+    def rollback(self):
+        # 支持回滚
+        if not self._in_txn:
+            raise ValueError("当前不在事务中，无法回滚")
+        self._in_txn = False
+        self._current_txn_id = None
+        self._rr_snapshot.clear()
+
+    def in_txn(self) -> bool:
+        return self._in_txn
+
+    def current_txn_id(self) -> Optional[int]:
+        return self._current_txn_id
+
+    def set_isolation_level(self, level: str):
+        # 允许：READ UNCOMMITTED / READ COMMITTED / REPEATABLE READ / SERIALIZABLE
+        self._isolation_level = level
+        # 更改隔离级别时清空快照
+        self._rr_snapshot.clear()
+
+    def isolation_level(self) -> str:
+        return self._isolation_level
+
+    def get_rr_snapshot_for_table(self, table_name: str) -> Optional[List[Dict[str, Any]]]:
+        return self._rr_snapshot.get(table_name)
+
+    def set_rr_snapshot_for_table(self, table_name: str, rows: List[Dict[str, Any]]):
+        self._rr_snapshot[table_name] = rows
+
 
 class SQLExecutor:
     """SQL执行器，将AST转换为数据库操作"""
+
+    _next_session_id = 1
 
     def __init__(
         self, table_manager: TableManager, catalog: SystemCatalog, index_manager=None
@@ -20,6 +132,14 @@ class SQLExecutor:
         self.table_manager = table_manager
         self.catalog = catalog
         self.index_manager = index_manager
+        self.txn = TransactionManager()
+        # 事务内延迟写入缓冲：txn_id -> List[Tuple[table_name, record_data]]
+        self._pending_inserts: Dict[int, List[Dict[str, Any]]] = {}
+        # 会话ID（用于锁管理）
+        self.session_id = SQLExecutor._next_session_id
+        SQLExecutor._next_session_id += 1
+        # Undo 日志：txn_id -> List[dict]（先进后出）
+        self._undo_log: Dict[int, List[Dict[str, Any]]] = {}
 
         # 操作符映射
         self.comparison_ops = {
@@ -31,23 +151,56 @@ class SQLExecutor:
             ">=": operator.ge,
         }
 
+    def _maybe_lock_shared(self, table_name: str):
+        if self.txn.isolation_level() == "SERIALIZABLE":
+            TableLockManager.acquire_shared(table_name, self.session_id)
+            # 在autocommit下，语句结束释放
+
+    def _maybe_lock_exclusive(self, table_name: str):
+        if self.txn.isolation_level() == "SERIALIZABLE":
+            TableLockManager.acquire_exclusive(table_name, self.session_id)
+
+    def _maybe_release_autocommit_locks(self):
+        if self.txn.isolation_level() == "SERIALIZABLE" and self.txn.autocommit():
+            TableLockManager.release_all_for_session(self.session_id)
+
     def execute(self, ast: Statement) -> Dict[str, Any]:
         """执行SQL语句"""
         try:
             # DEBUG: 打印进入execute的AST类型
             # print(f"[EXECUTOR DEBUG] execute() with AST: {type(ast).__name__}")
-            if isinstance(ast, CreateTableStatement):
-                return self._execute_create_table(ast)
+
+            # 用户管理语句
+            if isinstance(ast, CreateUserStatement):
+                result = self._execute_create_user(ast)
+            elif isinstance(ast, DropUserStatement):
+                result = self._execute_drop_user(ast)
+            elif isinstance(ast, GrantStatement):
+                result = self._execute_grant(ast)
+            elif isinstance(ast, RevokeStatement):
+                result = self._execute_revoke(ast)
+            # 表管理语句
+            elif isinstance(ast, CreateTableStatement):
+                result = self._execute_create_table(ast)
+            elif isinstance(ast, DropTableStatement):
+                result = self._execute_drop_table(ast)
+            elif isinstance(ast, TruncateTableStatement):
+                result = self._execute_truncate_table(ast)
             elif isinstance(ast, InsertStatement):
-                return self._execute_insert(ast)
+                result = self._execute_insert_immediate_undo(ast)
             elif isinstance(ast, SelectStatement):
                 # 查询视图重写
-                if isinstance(ast.from_table, str) and ast.from_table.lower() in self.catalog.views:
+                if (
+                    isinstance(ast.from_table, str)
+                    and hasattr(self.catalog, 'views')
+                    and ast.from_table.lower() in self.catalog.views
+                ):
                     # print(f"[EXECUTOR DEBUG] SELECT on view detected: view={ast.from_table}")
                     view_sql = self.catalog.get_view_definition(ast.from_table.lower())
                     # print(f"[EXECUTOR DEBUG] view SQL: {view_sql}")
                     from sql.lexer import SQLLexer
                     from sql.parser import SQLParser
+
                     lexer = SQLLexer(view_sql)
                     tokens = lexer.tokenize()
                     parser = SQLParser(tokens)
@@ -57,20 +210,28 @@ class SQLExecutor:
                     # 步骤 1: 执行视图定义，得到原始结果（list of dict）
                     view_result = self.execute(view_ast)
                     # print(f"[EXECUTOR DEBUG] view execution result meta: success={view_result.get('success')}, rows={len(view_result.get('data', []) ) if isinstance(view_result.get('data'), list) else 'N/A'}")
-                    if not view_result.get("success") or not isinstance(view_result.get("data"), list):
+                    if not view_result.get("success") or not isinstance(
+                        view_result.get("data"), list
+                    ):
                         return view_result
                     current_rows = view_result["data"]
 
                     # 步骤 2: 应用外部WHERE过滤
                     if ast.where_clause:
                         # print(f"[EXECUTOR DEBUG] applying outer WHERE on {len(current_rows)} rows: {ast.where_clause}")
-                        current_rows = [row for row in current_rows if self._evaluate_condition(ast.where_clause, row)]
+                        current_rows = [
+                            row
+                            for row in current_rows
+                            if self._evaluate_condition(ast.where_clause, row)
+                        ]
                         # print(f"[EXECUTOR DEBUG] rows after WHERE: {len(current_rows)}")
 
                     # 步骤 3: 投影
                     final_data = []
-                    columns_to_project = view_ast.columns if ast.columns == ["*"] else ast.columns
-                    is_select_all = (columns_to_project == ["*"])
+                    columns_to_project = (
+                        view_ast.columns if ast.columns == ["*"] else ast.columns
+                    )
+                    is_select_all = columns_to_project == ["*"]
                     # print(f"[EXECUTOR DEBUG] projection columns: {columns_to_project}")
                     for row in current_rows:
                         if is_select_all:
@@ -86,29 +247,82 @@ class SQLExecutor:
                                     proj[col_name] = row[col_name]
                         final_data.append(proj)
                     # print(f"[EXECUTOR DEBUG] final projected rows: {len(final_data)}")
-                    return {"type": "SELECT", "success": True, "data": final_data, "message": f"查询成功，返回{len(final_data)}行"}
-                return self._execute_select(ast)
+                    return {
+                        "type": "SELECT",
+                        "success": True,
+                        "data": final_data,
+                        "message": f"查询成功，返回{len(final_data)}行",
+                    }
+                result = self._execute_select(ast)
+            # 索引管理语句
             elif isinstance(ast, CreateIndexStatement):
-                return self._execute_create_index(ast)
+                result = self._execute_create_index(ast)
             elif isinstance(ast, DropIndexStatement):
-                return self._execute_drop_index(ast)
+                result = self._execute_drop_index(ast)
+            # 视图管理语句
             elif isinstance(ast, CreateViewStatement):
-                return self._execute_create_view(ast)
+                result = self._execute_create_view(ast)
             elif isinstance(ast, DropViewStatement):
-                return self._execute_drop_view(ast)
+                result = self._execute_drop_view(ast)
+            # 数据操作语句
             elif isinstance(ast, UpdateStatement):
-                return self._execute_update(ast)
+                result = self._execute_update_with_undo(ast)
             elif isinstance(ast, DeleteStatement):
-                return self._execute_delete(ast)
-            elif isinstance(ast, DropTableStatement):
-                return self._execute_drop_table(ast)
-            elif isinstance(ast, TruncateTableStatement):
-                return self._execute_truncate_table(ast)
+                result = self._execute_delete_with_undo(ast)
+            # 事务管理语句
+            elif isinstance(ast, BeginTransaction):
+                txn_id = self.txn.begin()
+                return {"type": "BEGIN", "success": True, "message": f"事务已开始 (id={txn_id})"}
+            elif isinstance(ast, CommitTransaction):
+                # 立即写入方案下，COMMIT 只需结束事务与释放资源
+                active_id = self.txn.current_txn_id()
+                self.txn.commit()
+                if active_id is not None:
+                    self._undo_log.pop(active_id, None)
+                TableLockManager.release_all_for_session(self.session_id)
+                return {"type": "COMMIT", "success": True, "message": "事务已提交"}
+            elif isinstance(ast, RollbackTransaction):
+                # 无活动事务时报错
+                if not self.txn.in_txn():
+                    return {"type": "ROLLBACK", "success": False, "message": "当前不在事务中，无法回滚"}
+                self._rollback_playback()
+                self._undo_log.pop(self.txn.current_txn_id(), None)
+                TableLockManager.release_all_for_session(self.session_id)
+                # 结束事务
+                self.txn.commit()
+                return {"type": "ROLLBACK", "success": True, "message": "事务已回滚"}
+            elif isinstance(ast, SetAutocommit):
+                switching_to_on = ast.enabled and self.txn.in_txn()
+                if switching_to_on:
+                    # MySQL 语义：切回 autocommit=1 会隐式提交当前事务
+                    if self.txn.current_txn_id() is not None:
+                        self._undo_log.pop(self.txn.current_txn_id(), None)
+                self.txn.set_autocommit(ast.enabled)
+                if ast.enabled:
+                    TableLockManager.release_all_for_session(self.session_id)
+                return {"type": "SET", "success": True, "message": f"AUTOCOMMIT={(1 if ast.enabled else 0)}"}
+            elif isinstance(ast, SetIsolationLevel):
+                self.txn.set_isolation_level(ast.level)
+                TableLockManager.release_all_for_session(self.session_id)
+                return {"type": "SET", "success": True, "message": f"ISOLATION LEVEL {ast.level}"}
             else:
                 raise ValueError(f"不支持的语句类型: {type(ast)}")
+
+            if self.txn.autocommit() and isinstance(
+                ast, (InsertStatement, UpdateStatement, DeleteStatement, CreateTableStatement, DropIndexStatement, CreateIndexStatement, DropTableStatement, TruncateTableStatement)
+            ):
+                self._maybe_release_autocommit_locks()
+
+            return result
         except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None,
+                "message": f"SQL执行失败: {str(e)}",
+            }
             # 统一异常返回结构，避免KeyError
-            return {"success": False, "error": str(e), "data": [], "message": f"SQL执行失败: {str(e)}"}
+            
 
     # --- 新增：CHECK 评估（NULL 视为通过，不违反约束） ---
     def _evaluate_check(self, condition: Expression, record_data: Dict[str, Any]) -> bool:
@@ -123,6 +337,320 @@ class SQLExecutor:
         except Exception:
             # 任意异常都视为不违反（保守处理），避免插入失败
             return True
+            
+
+    def _execute_create_user(self, stmt: CreateUserStatement) -> Dict[str, Any]:
+        """执行CREATE USER"""
+        success = self.catalog.create_user(stmt.username, stmt.password)
+
+        if success:
+            return {
+                "type": "CREATE_USER",
+                "username": stmt.username,
+                "success": True,
+                "message": f"用户 {stmt.username} 创建成功",
+            }
+        else:
+            return {"success": False, "message": f"用户 {stmt.username} 已存在"}
+
+    def _execute_drop_user(self, stmt: DropUserStatement) -> Dict[str, Any]:
+        """执行DROP USER"""
+        success = self.catalog.drop_user(stmt.username)
+
+        if success:
+            return {
+                "type": "DROP_USER",
+                "username": stmt.username,
+                "success": True,
+                "message": f"用户 {stmt.username} 删除成功",
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"用户 {stmt.username} 不存在或无法删除",
+            }
+
+    def _execute_create_view(self, stmt):
+        self.catalog.create_view(stmt.view_name, stmt.view_definition)
+        return {
+            "type": "CREATE_VIEW",
+            "view_name": stmt.view_name,
+            "success": True,
+            "message": f"视图 {stmt.view_name} 创建成功",
+        }
+
+    def _execute_drop_view(self, stmt):
+        self.catalog.drop_view(stmt.view_name)
+        return {
+            "type": "DROP_VIEW",
+            "view_name": stmt.view_name,
+            "success": True,
+            "message": f"视图 {stmt.view_name} 删除成功",
+        }
+
+    def _execute_grant(self, stmt: GrantStatement) -> Dict[str, Any]:
+        """执行GRANT"""
+        success = self.catalog.grant_privilege(
+            stmt.username, stmt.table_name, stmt.privilege
+        )
+
+        if success:
+            return {
+                "type": "GRANT",
+                "privilege": stmt.privilege,
+                "table_name": stmt.table_name,
+                "username": stmt.username,
+                "success": True,
+                "message": f"成功授予用户 {stmt.username} 表 {stmt.table_name} 的 {stmt.privilege} 权限",
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"授权失败：用户 {stmt.username} 不存在",
+            }
+
+    def _execute_revoke(self, stmt: RevokeStatement) -> Dict[str, Any]:
+        """执行REVOKE"""
+        success = self.catalog.revoke_privilege(
+            stmt.username, stmt.table_name, stmt.privilege
+        )
+
+        if success:
+            return {
+                "type": "REVOKE",
+                "privilege": stmt.privilege,
+                "table_name": stmt.table_name,
+                "username": stmt.username,
+                "success": True,
+                "message": f"成功撤销用户 {stmt.username} 表 {stmt.table_name} 的 {stmt.privilege} 权限",
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"撤权失败：用户 {stmt.username} 不存在或无此权限",
+            }
+
+    # 立即写入 + Undo 的 INSERT
+    def _execute_insert_immediate_undo(self, stmt: InsertStatement) -> Dict[str, Any]:
+        """执行INSERT - 统一唯一性索引校验，支持DEFAULT、CHECK、FOREIGN KEY + 事务Undo"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # SERIALIZABLE: 写锁
+        self._maybe_lock_exclusive(stmt.table_name)
+
+        inserted_count = 0
+        for value_row in stmt.values:
+            record_data: Dict[str, Any] = {}
+            if stmt.columns:
+                if len(stmt.columns) != len(value_row):
+                    raise ValueError("列数和值数不匹配")
+                for i, col_name in enumerate(stmt.columns):
+                    value = self._evaluate_expression(value_row[i], {})
+                    record_data[col_name] = value
+            else:
+                if len(value_row) != len(schema.columns):
+                    raise ValueError("值数和表列数不匹配")
+                for i, column in enumerate(schema.columns):
+                    value = self._evaluate_expression(value_row[i], {})
+                    record_data[column.name] = value
+
+            # 补全DEFAULT值
+            for column in schema.columns:
+                if column.name not in record_data or record_data[column.name] is None:
+                    if hasattr(column, 'default') and column.default is not None:
+                        # 类型转换：如果是数字类型，转换为int/float
+                        if column.data_type.name in ("INTEGER", "BIGINT", "TINYINT"):
+                            record_data[column.name] = int(column.default)
+                        elif column.data_type.name in ("FLOAT", "DECIMAL"):
+                            record_data[column.name] = float(column.default)
+                        else:
+                            record_data[column.name] = column.default
+                # 如果依然没有值，且不是nullable，报错
+                if column.name not in record_data and not column.nullable:
+                    raise ValueError(f"列 {column.name} 不能为空")
+
+            # 获取所有唯一性索引（主键、UNIQUE列、唯一索引、复合唯一索引）
+            unique_indexes = []
+            if self.index_manager and hasattr(self.index_manager, 'get_unique_indexes_for_table'):
+                try:
+                    unique_indexes = self.index_manager.get_unique_indexes_for_table(stmt.table_name)
+                except:
+                    unique_indexes = []
+
+            # 插入前校验所有唯一性约束
+            for index in unique_indexes:
+                index_keys = [record_data.get(col) for col in index.columns]
+                if all(key is not None for key in index_keys):
+                    existing = self.index_manager.lookup(index.name, index_keys)
+                    if existing:
+                        constraint_columns = ", ".join(index.columns)
+                        raise ValueError(
+                            f"唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在"
+                        )
+
+            # 校验CHECK约束
+            for column in schema.columns:
+                if hasattr(column, 'check') and column.check is not None:
+                    context = record_data.copy()
+                    if not self._evaluate_condition(column.check, context):
+                        raise ValueError(f"CHECK约束不满足: {column.name}")
+            if hasattr(schema, 'check_constraints'):
+                for check_expr in schema.check_constraints:
+                    context = record_data.copy()
+                    if not self._evaluate_condition(check_expr, context):
+                        raise ValueError("表级CHECK约束不满足")
+
+            # 校验FOREIGN KEY约束
+            for column in schema.columns:
+                if hasattr(column, 'foreign_key') and column.foreign_key:
+                    ref_value = record_data.get(column.name)
+                    if ref_value is not None:
+                        ref_table = column.foreign_key["ref_table"]
+                        ref_column = column.foreign_key["ref_column"]
+                        ref_schema = self.catalog.get_table_schema(ref_table)
+                        if not ref_schema:
+                            raise ValueError(f"外键引用表不存在: {ref_table}")
+                        found = False
+                        # 这里的全表扫描效率很低，未来可以用索引优化
+                        for ref_record in self.table_manager.scan_table(ref_table):
+                            if ref_record.data.get(ref_column) == ref_value:
+                                found = True
+                                break
+                        if not found:
+                            raise ValueError(
+                                f"外键约束不满足: {column.name} -> {ref_table}({ref_column})"
+                            )
+
+            # 实际插入
+            if hasattr(self.table_manager, 'insert_record_with_location'):
+                loc = self.table_manager.insert_record_with_location(stmt.table_name, record_data)
+                if not loc:
+                    raise ValueError("插入记录失败")
+                page_id, ridx = loc
+                record_id = (page_id, ridx)
+            else:
+                # 获取插入前的记录数，作为新记录的ID
+                all_records = self.table_manager.scan_table(stmt.table_name)
+                record_id = len(all_records)  # 新记录的ID
+
+                # 插入记录到表中
+                self.table_manager.insert_record(stmt.table_name, record_data)
+                page_id, ridx = None, None
+
+            # 索引维护
+            if self.index_manager:
+                if hasattr(self.index_manager, 'insert_into_indexes'):
+                    self.index_manager.insert_into_indexes(stmt.table_name, record_data, record_id)
+                else:
+                    # 兼容老版本索引管理器
+                    table_indexes = self.index_manager.get_table_indexes(stmt.table_name)
+                    for index_name in table_indexes:
+                        index_info = self.index_manager.indexes.get(index_name)
+                        if index_info and index_info.column_name in record_data:
+                            btree = self.index_manager.get_index(index_name)
+                            if btree:
+                                key = record_data[index_info.column_name]
+                                btree.insert(key, record_id)
+
+            # 若在事务中，记录补偿删除的 Undo
+            if self.txn.in_txn():
+                if page_id is not None and ridx is not None:
+                    self._push_undo({
+                        "type": "INSERT",
+                        "table": stmt.table_name,
+                        "page_id": page_id,
+                        "index": ridx,
+                    })
+
+            inserted_count += 1
+
+        return {
+            "type": "INSERT",
+            "table_name": stmt.table_name,
+            "rows_inserted": inserted_count,
+            "success": True,
+            "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
+        }
+
+    def _execute_insert(self, stmt: InsertStatement) -> Dict[str, Any]:
+        """执行INSERT - 修复版，正确处理记录ID（兼容版本）"""
+        return self._execute_insert_immediate_undo(stmt)
+
+    def _apply_commit(self):
+        """提交当前事务的延迟写入（只处理INSERT）并更新索引"""
+        txn_id = self.txn.current_txn_id()
+        if txn_id is None:
+            return
+        pending = self._pending_inserts.get(txn_id, [])
+        if not pending:
+            return
+        applied = 0
+        for item in pending:
+            table_name = item["table"]
+            data = item["data"]
+            # 实际插入（拿到RID）
+            if hasattr(self.table_manager, 'insert_record_with_location'):
+                loc = self.table_manager.insert_record_with_location(table_name, data)
+                if not loc:
+                    continue
+                page_id, ridx = loc
+                # 索引维护：写入RID
+                if self.index_manager:
+                    self.index_manager.insert_into_indexes(table_name, data, (page_id, ridx))
+            applied += 1
+        # 清理
+        self._pending_inserts.pop(txn_id, None)
+
+    def _discard_pending(self):
+        txn_id = self.txn.current_txn_id()
+        if txn_id is None:
+            return
+        self._pending_inserts.pop(txn_id, None)
+
+    def _ensure_undo_stack(self) -> Optional[int]:
+        txn_id = self.txn.current_txn_id()
+        if txn_id is None:
+            return None
+        if txn_id not in self._undo_log:
+            self._undo_log[txn_id] = []
+        return txn_id
+
+    def _push_undo(self, entry: Dict[str, Any]):
+        txn_id = self._ensure_undo_stack()
+        if txn_id is None:
+            return
+        self._undo_log[txn_id].append(entry)
+
+    def _rollback_playback(self):
+        txn_id = self.txn.current_txn_id()
+        if txn_id is None:
+            return
+        stack = self._undo_log.get(txn_id, [])
+        while stack:
+            entry = stack.pop()
+            typ = entry.get("type")
+            table = entry.get("table")
+            if typ == "UPDATE":
+                page_id = entry["page_id"]
+                idx = entry["index"]
+                old_data = entry["old_data"]
+                if hasattr(self.table_manager, 'update_at'):
+                    self.table_manager.update_at(table, page_id, idx, old_data)
+            elif typ == "DELETE":
+                # 将旧值插回；可能插入到新位置
+                old_data = entry["old_data"]
+                if hasattr(self.table_manager, 'insert_record_with_location'):
+                    self.table_manager.insert_record_with_location(table, old_data)
+            elif typ == "INSERT":
+                # 如果将来改为立即写入插入，这里需要补偿删除
+                page_id = entry.get("page_id")
+                idx = entry.get("index")
+                if page_id is not None and idx is not None and hasattr(self.table_manager, 'delete_at'):
+                    self.table_manager.delete_at(table, page_id, idx)
+            else:
+                pass
 
     def _execute_create_table(self, stmt: CreateTableStatement) -> Dict[str, Any]:
         """执行CREATE TABLE"""
@@ -231,8 +759,8 @@ class SQLExecutor:
             table_indexes = self.index_manager.get_table_indexes(stmt.table_name)
             for index_name in table_indexes:
                 btree = self.index_manager.get_index(index_name)
-                if btree:
-                    btree.clear()  # 假设B+树有clear方法
+                if btree and hasattr(btree, 'clear'):
+                    btree.clear()
 
         return {
             "type": "TRUNCATE_TABLE",
@@ -361,7 +889,7 @@ class SQLExecutor:
 
     # 合并后的 _execute_select 函数
     def _execute_select(self, stmt: SelectStatement) -> Dict[str, Any]:
-        """执行SELECT - 扩展支持JOIN和聚合函数"""
+        """执行SELECT - 扩展支持JOIN和聚合函数 + 事务隔离级别"""
 
         # 递归获取结果集
         def eval_from(from_table):
@@ -370,8 +898,41 @@ class SQLExecutor:
                 schema = self.catalog.get_table_schema(from_table)
                 if not schema:
                     raise ValueError(f"表 {from_table} 不存在")
-                # 返回Record对象和表名
-                return self.table_manager.scan_table(from_table), from_table
+
+                # SERIALIZABLE: 申请读锁
+                self._maybe_lock_shared(from_table)
+
+                # 读取基线集合：取决于隔离级别
+                base_records: List[Record] = []
+                level = self.txn.isolation_level()
+                in_txn_ctx = self.txn.in_txn() and not self.txn.autocommit()
+
+                # REPEATABLE READ / SERIALIZABLE: 第一次读时拍快照
+                if in_txn_ctx and level in ("REPEATABLE READ", "SERIALIZABLE"):
+                    snap = self.txn.get_rr_snapshot_for_table(from_table)
+                    if snap is None:
+                        committed_rows = self.table_manager.scan_table(from_table)
+                        snapshot_rows = [dict(r.data) for r in committed_rows]
+                        self.txn.set_rr_snapshot_for_table(from_table, snapshot_rows)
+                        snap = snapshot_rows
+                    # 基线用快照
+                    base_dict_rows = snap
+                    base_records = [Record(dict(row)) for row in base_dict_rows]
+                else:
+                    # READ COMMITTED / READ UNCOMMITTED: 每次读最新已提交
+                    committed_rows = self.table_manager.scan_table(from_table)
+                    base_records = committed_rows
+
+                # 当前事务缓冲数据（仅当前会话可见）
+                extra_rows: List[Record] = []
+                if in_txn_ctx:
+                    txn_id = self.txn.current_txn_id()
+                    for item in self._pending_inserts.get(txn_id, []):
+                        if item["table"] == from_table:
+                            row = item["data"]
+                            extra_rows.append(Record(dict(row)))
+
+                return base_records + extra_rows, from_table
             elif isinstance(from_table, JoinClause):
                 # JOIN
                 left_records, left_name = eval_from(from_table.left)
@@ -405,7 +966,6 @@ class SQLExecutor:
                 # 只保留过滤后的context，便于后续投影
                 record._filtered_context = context
                 filtered_records.append(record)
-        # print(f"[EXECUTOR DEBUG] _execute_select: rows_after_where={len(filtered_records)}")
 
         # 如果存在 GROUP BY
         if getattr(stmt, 'group_by', None):
@@ -633,18 +1193,12 @@ class SQLExecutor:
 
         return {
             "type": "SELECT",
-            "success": True,
+            "table_name": from_name,
+            "rows_returned": len(result_records),
             "data": result_records,
-            "message": f"查询成功，返回{len(result_records)}行"
+            "success": True,
+            "message": f"查询返回 {len(result_records)} 行",
         }
-
-    def _execute_create_view(self, stmt):
-        self.catalog.create_view(stmt.view_name, stmt.view_definition)
-        return {"type": "CREATE_VIEW", "view_name": stmt.view_name, "success": True, "message": f"视图 {stmt.view_name} 创建成功"}
-
-    def _execute_drop_view(self, stmt):
-        self.catalog.drop_view(stmt.view_name)
-        return {"type": "DROP_VIEW", "view_name": stmt.view_name, "success": True, "message": f"视图 {stmt.view_name} 删除成功"}
 
     def _execute_create_index(self, stmt: CreateIndexStatement) -> Dict[str, Any]:
         """执行CREATE INDEX"""
@@ -696,9 +1250,7 @@ class SQLExecutor:
             "message": f"索引 {stmt.index_name} 删除成功",
         }
 
-    def _build_index_for_existing_data(
-        self, index_name: str, table_name: str, column_name: str
-    ):
+    def _build_index_for_existing_data(self, index_name: str, table_name: str, column_name: str):
         """为现有数据构建索引 - 修复版"""
         btree = self.index_manager.get_index(index_name)
         if not btree:
@@ -710,11 +1262,8 @@ class SQLExecutor:
             if column_name in record.data:
                 key = record.data[column_name]
                 btree.insert(key, record_id)  # 存储正确的记录ID
-                # print(f"DEBUG: 构建索引 {index_name}: {key} -> {record_id}")
 
-    def _try_index_scan(
-        self, table_name: str, where_clause: Expression
-    ) -> Optional[List[Record]]:
+    def _try_index_scan(self, table_name: str, where_clause: Expression) -> Optional[List[Record]]:
         """尝试使用索引扫描优化查询 - 修复版"""
         if not self.index_manager:
             return None
@@ -728,19 +1277,14 @@ class SQLExecutor:
         if not btree:
             return None
 
-        # print(f"DEBUG: 使用索引 {index_name} 查找 {column_name} {operator} {value}")
-
         if operator == "=":
             # 精确查找
             record_id = btree.search(value)
-            # print(f"DEBUG: 索引搜索结果: {record_id}")
-
             if record_id is not None:
                 if isinstance(record_id, (list, tuple)):
                     record_ids = list(record_id)
                 else:
                     record_ids = [record_id]
-
                 return self._get_records_by_ids(table_name, record_ids)
         elif operator in ["<", "<=", ">", ">="]:
             # 范围查询
@@ -754,16 +1298,12 @@ class SQLExecutor:
 
         return None
 
-    def _analyze_where_for_index(
-        self, table_name: str, where_clause: Expression
-    ) -> Optional[tuple]:
+    def _analyze_where_for_index(self, table_name: str, where_clause: Expression) -> Optional[tuple]:
         """分析WHERE条件，看是否可以使用索引"""
         if not isinstance(where_clause, BinaryOp):
             return None
 
-        if isinstance(where_clause.left, ColumnRef) and isinstance(
-            where_clause.right, Literal
-        ):
+        if isinstance(where_clause.left, ColumnRef) and isinstance(where_clause.right, Literal):
             column_name = where_clause.left.column_name
             operator = where_clause.operator
             value = where_clause.right.value
@@ -776,58 +1316,148 @@ class SQLExecutor:
 
         return None
 
-    def _get_records_by_ids(
-        self, table_name: str, record_ids: List[int]
-    ) -> List[Record]:
+    def _get_records_by_ids(self, table_name: str, record_ids: List[int]) -> List[Record]:
         """根据记录ID获取记录 - 修复版"""
-        all_records = self.table_manager.scan_table(table_name)
+        if hasattr(self.table_manager, 'scan_table_with_locations'):
+            # 使用位置信息的版本
+            rid_set = set(record_ids)
+            results: List[Record] = []
+            for page_id, idx, rec in self.table_manager.scan_table_with_locations(table_name):
+                if (page_id, idx) in rid_set:
+                    results.append(rec)
+            return results
+        else:
+            # 兼容老版本
+            all_records = self.table_manager.scan_table(table_name)
+            result = []
+            for record_id in record_ids:
+                if 0 <= record_id < len(all_records):
+                    result.append(all_records[record_id])
+            return result
 
-        result = []
+    def _execute_update_with_undo(self, stmt: UpdateStatement) -> Dict[str, Any]:
+        """执行UPDATE with Undo支持"""
+        # SERIALIZABLE: 写锁
+        self._maybe_lock_exclusive(stmt.table_name)
 
-        for record_id in record_ids:
-            if 0 <= record_id < len(all_records):
-                result.append(all_records[record_id])
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 预计算 updates 值
+        updates: Dict[str, Any] = {}
+        for set_clause in stmt.set_clauses:
+            column_name = set_clause["column"]
+            value_expr = set_clause["value"]
+            if isinstance(value_expr, Literal):
+                updates[column_name] = value_expr.value
             else:
-                print(
-                    f"DEBUG: 记录ID {record_id} 超出范围，总记录数: {len(all_records)}"
-                )
+                raise ValueError("UPDATE暂时只支持字面量值")
 
-        # print(f"DEBUG: 根据ID获取到 {len(result)} 条记录")
-        return result
+        updated = 0
+
+        # 如果支持位置更新
+        if hasattr(self.table_manager, 'scan_table_with_locations') and hasattr(self.table_manager, 'update_at'):
+            for page_id, idx, rec in self.table_manager.scan_table_with_locations(stmt.table_name):
+                if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
+                    old_data = dict(rec.data)
+                    new_data = dict(old_data)
+                    new_data.update(updates)
+                    if self.table_manager.update_at(stmt.table_name, page_id, idx, new_data):
+                        updated += 1
+                        # 写入undo
+                        self._push_undo({
+                            "type": "UPDATE",
+                            "table": stmt.table_name,
+                            "page_id": page_id,
+                            "index": idx,
+                            "old_data": old_data,
+                        })
+        else:
+            # 兼容版本
+            condition_func = None
+            if stmt.where_clause:
+                condition_func = lambda record_data: self._evaluate_condition(stmt.where_clause, record_data)
+
+            if hasattr(self.table_manager, 'update_records'):
+                updated = self.table_manager.update_records(stmt.table_name, updates, condition_func)
+
+        return {
+            "type": "UPDATE",
+            "table_name": stmt.table_name,
+            "rows_updated": updated,
+            "success": True,
+            "message": f"成功更新 {updated} 行"
+        }
+
+    def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
+        """执行UPDATE语句（兼容版本）"""
+        return self._execute_update_with_undo(stmt)
+
+    def _execute_delete_with_undo(self, stmt: DeleteStatement) -> Dict[str, Any]:
+        """执行DELETE with Undo支持"""
+        # SERIALIZABLE: 写锁
+        self._maybe_lock_exclusive(stmt.table_name)
+
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        deleted = 0
+
+        # 如果支持位置删除
+        if hasattr(self.table_manager, 'scan_table_with_locations') and hasattr(self.table_manager, 'delete_at'):
+            for page_id, idx, rec in self.table_manager.scan_table_with_locations(stmt.table_name):
+                if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
+                    old_data = dict(rec.data)
+                    if self.table_manager.delete_at(stmt.table_name, page_id, idx):
+                        deleted += 1
+                        self._push_undo({
+                            "type": "DELETE",
+                            "table": stmt.table_name,
+                            "page_id": page_id,
+                            "index": idx,
+                            "old_data": old_data,
+                        })
+        else:
+            # 兼容版本
+            condition_func = None
+            if stmt.where_clause:
+                condition_func = lambda record_data: self._evaluate_condition(stmt.where_clause, record_data)
+
+            if hasattr(self.table_manager, 'delete_records'):
+                deleted = self.table_manager.delete_records(stmt.table_name, condition_func)
+
+        return {
+            "type": "DELETE",
+            "table_name": stmt.table_name,
+            "rows_deleted": deleted,
+            "success": True,
+            "message": f"成功删除 {deleted} 行"
+        }
+
+    def _execute_delete(self, stmt: DeleteStatement) -> Dict[str, Any]:
+        """执行DELETE语句（兼容版本）"""
+        return self._execute_delete_with_undo(stmt)
 
     def _evaluate_expression(self, expr: Expression, context: Dict[str, Any]) -> Any:
         if isinstance(expr, Literal):
             return expr.value
         elif isinstance(expr, ColumnRef):
-            # 优先查找带前缀
-            if expr.table_name:
+            if hasattr(expr, 'table_name') and expr.table_name:
+                # 优先查找带前缀
                 key = f"{expr.table_name}.{expr.column_name}"
                 if key in context:
                     return context[key]
             # 回退查找无前缀
-            if expr.column_name in context:
-                return context[expr.column_name]
-            # 兼容：如果context只有一个key且key结尾是.column_name，也允许
-            matches = [v for k, v in context.items() if k.endswith(f".{expr.column_name}")]
-            if len(matches) == 1:
-                return matches[0]
-            return None
+            col_name = expr.column_name if hasattr(expr, 'column_name') else str(expr)
+            return context.get(col_name)
         else:
             raise ValueError(f"不支持的表达式类型: {type(expr)}")
 
-    def _evaluate_condition(
-        self, condition: Expression, record_data: Dict[str, Any]
-    ) -> bool:
+    def _evaluate_condition(self, condition: Expression, record_data: Dict[str, Any]) -> bool:
         """评估WHERE条件"""
         if isinstance(condition, BinaryOp):
-            # # --- 在这里加入调试代码 ---
-            # # print(f"DEBUG: [Evaluating Condition] on data: {record_data}")
-            # left_val = self._evaluate_expression(condition.left, record_data)
-            # right_val = self._evaluate_expression(condition.right, record_data)
-            # result = self.comparison_ops.get(condition.operator)(left_val, right_val)
-            # # print(f"DEBUG: [Comparison] '{left_val}' {condition.operator} '{right_val}' -> {result}")
-            # # --- 调试代码结束 ---
-           
             left_val = self._evaluate_expression(condition.left, record_data)
             right_val = self._evaluate_expression(condition.right, record_data)
 
@@ -850,66 +1480,3 @@ class SQLExecutor:
 
         else:
             raise ValueError(f"不支持的条件类型: {type(condition)}")
-
-    def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
-        """执行UPDATE语句"""
-        schema = self.catalog.get_table_schema(stmt.table_name)
-        if not schema:
-            raise ValueError(f"表 {stmt.table_name} 不存在")
-
-        # 构建更新数据
-        updates = {}
-        for set_clause in stmt.set_clauses:
-            column_name = set_clause["column"]
-            value_expr = set_clause["value"]
-            # 计算表达式值（对于简单字面量）
-            if isinstance(value_expr, Literal):
-                updates[column_name] = value_expr.value
-            else:
-                raise ValueError(f"UPDATE暂时只支持字面量值")
-
-        # 构建条件函数
-        condition_func = None
-        if stmt.where_clause:
-            condition_func = lambda record_data: self._evaluate_condition(
-                stmt.where_clause, record_data
-            )
-
-        # 执行更新
-        updated_count = self.table_manager.update_records(
-            stmt.table_name, updates, condition_func
-        )
-
-        return {
-            "type": "UPDATE",
-            "table_name": stmt.table_name,
-            "rows_updated": updated_count,
-            "success": True,
-            "message": f"成功更新 {updated_count} 行",
-        }
-
-    def _execute_delete(self, stmt: DeleteStatement) -> Dict[str, Any]:
-        """执行DELETE语句"""
-        schema = self.catalog.get_table_schema(stmt.table_name)
-        if not schema:
-            raise ValueError(f"表 {stmt.table_name} 不存在")
-
-        # 构建条件函数
-        condition_func = None
-        if stmt.where_clause:
-            condition_func = lambda record_data: self._evaluate_condition(
-                stmt.where_clause, record_data
-            )
-
-        # 执行删除
-        deleted_count = self.table_manager.delete_records(
-            stmt.table_name, condition_func
-        )
-
-        return {
-            "type": "DELETE",
-            "table_name": stmt.table_name,
-            "rows_deleted": deleted_count,
-            "success": True,
-            "message": f"成功删除 {deleted_count} 行",
-        }

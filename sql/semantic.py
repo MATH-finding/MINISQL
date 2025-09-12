@@ -56,6 +56,10 @@ class SemanticAnalyzer:
         table_schemas: Dict[str, Dict[str, Dict]] = {}
 
         def add_table(table_name: str):
+            # 允许视图：由执行器在执行阶段展开，这里不抛错
+            if hasattr(self.catalog, 'views') and table_name in getattr(self.catalog, 'views', {}):
+                table_schemas[table_name] = {}
+                return
             schema = self.catalog.get_table_schema(table_name)
             if not schema:
                 raise SemanticError(f"表 {table_name} 不存在")
@@ -93,8 +97,10 @@ class SemanticAnalyzer:
         result: List[ColumnRef] = []
         def dfs(node: Union[str, JoinClause]):
             if isinstance(node, str):
-                for col_name in table_schemas[node].keys():
-                    result.append(ColumnRef(col_name, node))
+                # 对视图此处无法展开，由执行器负责
+                if node in table_schemas and table_schemas[node]:
+                    for col_name in table_schemas[node].keys():
+                        result.append(ColumnRef(col_name, node))
             else:
                 dfs(node.left)
                 dfs(node.right)

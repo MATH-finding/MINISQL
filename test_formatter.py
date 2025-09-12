@@ -333,6 +333,13 @@ class TestFormatter:
                 pass
         db = SimpleDatabase(db_path, cache_size=16)
         try:
+            # 登录管理员（拥有所有权限）
+            login_res = db.login("admin", "admin123")
+            if not login_res.get("success"):
+                print(f"❌ 错误: 无法登录管理员账户: {login_res}")
+                self._mark_test_failed("语义分析集成登录")
+                return
+            
             # 建表
             format_query_result(db.execute_sql("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)"))
             format_query_result(db.execute_sql("CREATE TABLE emp (id INTEGER PRIMARY KEY, name TEXT, dept_id INTEGER, salary INTEGER)"))
@@ -508,6 +515,7 @@ class TestFormatter:
             print("\n🎉 所有测试都通过了！formatter.py 功能正常")
         else:
             print(f"\n⚠️ 有 {self.tests_failed} 个测试失败，需要检查")
+
 
 def run_performance_test():
     """运行性能测试"""

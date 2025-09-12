@@ -8,9 +8,23 @@ from storage import PageManager, BufferManager, RecordManager
 from catalog import SystemCatalog
 from catalog.index_manager import IndexManager
 from table import TableManager
-from sql import SQLLexer, SQLParser, SQLExecutor
-from sql.semantic import SemanticAnalyzer, SemanticError
-from sql.diagnostics import DiagnosticEngine
+from sql import (
+    SQLLexer,
+    SQLParser,
+    SQLExecutor,
+    SelectStatement,
+    InsertStatement,
+    UpdateStatement,
+    DeleteStatement,
+    CreateTableStatement,
+    DropTableStatement,
+    Statement,
+    SemanticAnalyzer,
+    SemanticError,
+    DiagnosticEngine
+)
+from typing import Optional
+
 
 
 class SimpleDatabase:
@@ -45,21 +59,86 @@ class SimpleDatabase:
         # 初始化表管理层
         self.table_manager = TableManager(self.catalog, self.record_manager)
 
-        # 初始化SQL处理层 - 传入索引管理器
-        self.sql_executor = SQLExecutor(
-            self.table_manager, self.catalog, self.index_manager
-        )
+        # 会话管理：多个执行器共享同一存储与目录
+        self._executors = []
+        self._current_session = None
+        self.new_session()  # 默认创建一个会话
 
+        # 为了兼容性，也设置executor别名
         self.executor = self.sql_executor
 
-        # 新增：语义分析器 与 诊断纠错引擎
+        # 用户会话管理
+        self.current_user = None
+        self.is_authenticated = False
+
+        # 语义分析器 与 诊断纠错引擎
         self.semantic = SemanticAnalyzer(self.catalog)
         self.diag = DiagnosticEngine(self.catalog, auto_correct=True)
 
         print(f"数据库 {db_file} 已连接")
 
+    def new_session(self) -> int:
+        """创建新会话"""
+        executor = SQLExecutor(self.table_manager, self.catalog, self.index_manager)
+        self._executors.append(executor)
+        self._current_session = len(self._executors) - 1
+        return self._current_session
+
+    def use_session(self, idx: int) -> bool:
+        """切换到指定会话"""
+        if 0 <= idx < len(self._executors):
+            self._current_session = idx
+            return True
+        return False
+
+    def list_sessions(self) -> list:
+        """列出所有会话"""
+        result = []
+        for i, ex in enumerate(self._executors):
+            result.append({
+                "id": i,
+                "session_id": getattr(ex, "session_id", i + 1),
+                "autocommit": ex.txn.autocommit(),
+                "in_txn": ex.txn.in_txn(),
+                "isolation": ex.txn.isolation_level(),
+                "current": (i == self._current_session),
+            })
+        return result
+
+    @property
+    def sql_executor(self) -> SQLExecutor:
+        """获取当前会话的SQL执行器"""
+        return self._executors[self._current_session]
+
+    def login(self, username: str, password: str) -> Dict[str, Any]:
+        """用户登录"""
+        if self.catalog.authenticate_user(username, password):
+            self.current_user = username
+            self.is_authenticated = True
+            return {"success": True, "message": f"用户 {username} 登录成功"}
+        else:
+            return {"success": False, "message": "用户名或密码错误"}
+
+    def logout(self) -> Dict[str, Any]:
+        """用户登出"""
+        user = self.current_user
+        self.current_user = None
+        self.is_authenticated = False
+        return {"success": True, "message": f"用户 {user} 已登出"}
+
+    def get_current_user(self) -> Optional[str]:
+        """获取当前用户"""
+        return self.current_user
+
     def execute_sql(self, sql: str) -> Dict[str, Any]:
-        """执行SQL语句"""
+        """执行SQL语句 - 带权限检查"""
+        if not self.is_authenticated:
+            return {
+                "success": False,
+                "error": "未登录",
+                "message": "请先登录后再执行SQL语句",
+            }
+
         try:
             # 词法分析
             lexer = SQLLexer(sql.strip())
@@ -68,6 +147,16 @@ class SimpleDatabase:
             # 语法分析
             parser = SQLParser(tokens)
             ast = parser.parse()
+
+            # 权限检查 - admin用户跳过权限检查
+            if self.current_user != "admin":
+                privilege_check = self._check_statement_privilege(ast)
+                if not privilege_check["allowed"]:
+                    return {
+                        "success": False,
+                        "error": "权限不足",
+                        "message": privilege_check["message"],
+                    }
 
             # 语义分析
             auto_corrected = False
@@ -105,7 +194,7 @@ class SimpleDatabase:
             # 记录SQL执行日志
             if self.log_manager:
                 success = result.get("success", False)
-                result_count = len(result.get("data", [])) if "data" in result else 0
+                result_count = len(result.get("data") or []) if "data" in result else 0
                 self.log_manager.log_sql_execution(sql, success, 0.0, result_count)
 
             return result
@@ -115,7 +204,6 @@ class SimpleDatabase:
                 self.log_manager.log_sql_execution(sql, False, 0.0, 0)
             return {"success": False, "error": str(e), "message": f"语义错误: {str(e)}", "data": []}
         except Exception as e:
-            # 记录SQL执行失败日志
             if self.log_manager:
                 self.log_manager.log_sql_execution(sql, False, 0.0, 0)
 
@@ -125,6 +213,67 @@ class SimpleDatabase:
                 "message": f"SQL执行失败: {str(e)}",
                 "data": [],
             }
+
+    def _check_statement_privilege(self, ast: Statement) -> Dict[str, Any]:
+        """检查语句执行权限"""
+        # admin用户已在外层被跳过，这里不会执行到admin用户
+
+        if isinstance(ast, SelectStatement):
+            table_name = (
+                ast.from_table if isinstance(ast.from_table, str) else "unknown"
+            )
+            if not self.catalog.check_privilege(
+                self.current_user, table_name, "SELECT"
+            ):
+                return {
+                    "allowed": False,
+                    "message": f"用户 {self.current_user} 没有表 {table_name} 的 SELECT 权限",
+                }
+
+        elif isinstance(ast, InsertStatement):
+            if not self.catalog.check_privilege(
+                self.current_user, ast.table_name, "INSERT"
+            ):
+                return {
+                    "allowed": False,
+                    "message": f"用户 {self.current_user} 没有表 {ast.table_name} 的 INSERT 权限",
+                }
+
+        elif isinstance(ast, UpdateStatement):
+            if not self.catalog.check_privilege(
+                self.current_user, ast.table_name, "UPDATE"
+            ):
+                return {
+                    "allowed": False,
+                    "message": f"用户 {self.current_user} 没有表 {ast.table_name} 的 UPDATE 权限",
+                }
+
+        elif isinstance(ast, DeleteStatement):
+            if not self.catalog.check_privilege(
+                self.current_user, ast.table_name, "DELETE"
+            ):
+                return {
+                    "allowed": False,
+                    "message": f"用户 {self.current_user} 没有表 {ast.table_name} 的 DELETE 权限",
+                }
+
+        elif isinstance(ast, CreateTableStatement):
+            if not self.catalog.check_privilege(self.current_user, "*", "CREATE"):
+                return {
+                    "allowed": False,
+                    "message": f"用户 {self.current_user} 没有 CREATE 权限",
+                }
+
+        elif isinstance(ast, DropTableStatement):
+            if not self.catalog.check_privilege(
+                self.current_user, ast.table_name, "DROP"
+            ):
+                return {
+                    "allowed": False,
+                    "message": f"用户 {self.current_user} 没有表 {ast.table_name} 的 DROP 权限",
+                }
+
+        return {"allowed": True}
 
     def create_index(
         self,

@@ -7,7 +7,6 @@ from sql import Token, TokenType
 from .ast_nodes import *
 
 
-
 class SQLParser:
     """SQL语法分析器"""
 
@@ -23,19 +22,33 @@ class SQLParser:
         if not self.current_token or self.current_token.type == TokenType.EOF:
             raise SyntaxError("空的SQL语句")
         if self.current_token.type == TokenType.CREATE:
+            # CREATE USER
+            if self._peek_token_type(1) == TokenType.USER:
+                return self._parse_create_user()
             # CREATE VIEW
-            if self._peek_token_type(1) == TokenType.VIEW:
+            elif self._peek_token_type(1) == TokenType.VIEW:
                 # print("[PARSER DEBUG] dispatching to _parse_create_view")
                 return self._parse_create_view()
-            # print("[PARSER DEBUG] dispatching to _parse_create_statement")
-            return self._parse_create_statement()
+            # CREATE TABLE/INDEX
+            else:
+                # print("[PARSER DEBUG] dispatching to _parse_create_statement")
+                return self._parse_create_statement()
         elif self.current_token.type == TokenType.DROP:
+            # DROP USER
+            if self._peek_token_type(1) == TokenType.USER:
+                return self._parse_drop_user()
             # DROP VIEW
-            if self._peek_token_type(1) == TokenType.VIEW:
+            elif self._peek_token_type(1) == TokenType.VIEW:
                 # print("[PARSER DEBUG] dispatching to _parse_drop_view")
                 return self._parse_drop_view()
-            # print("[PARSER DEBUG] dispatching to _parse_drop_statement")
-            return self._parse_drop_statement()
+            # DROP TABLE/INDEX
+            else:
+                # print("[PARSER DEBUG] dispatching to _parse_drop_statement")
+                return self._parse_drop_statement()
+        elif self.current_token.type == TokenType.GRANT:
+            return self._parse_grant()
+        elif self.current_token.type == TokenType.REVOKE:
+            return self._parse_revoke()
         elif self.current_token.type == TokenType.INSERT:
             # print("[PARSER DEBUG] dispatching to _parse_insert")
             return self._parse_insert()
@@ -48,6 +61,16 @@ class SQLParser:
         elif self.current_token.type == TokenType.DELETE:  # 新增
             # print("[PARSER DEBUG] dispatching to _parse_delete")
             return self._parse_delete()
+        elif self.current_token.type == TokenType.BEGIN:
+            return self._parse_begin()
+        elif self.current_token.type == TokenType.START:
+            return self._parse_start_transaction()
+        elif self.current_token.type == TokenType.COMMIT:
+            return self._parse_commit()
+        elif self.current_token.type == TokenType.ROLLBACK:
+            return self._parse_rollback()
+        elif self.current_token.type == TokenType.SET:
+            return self._parse_set()
         elif self.current_token.type == TokenType.TRUNCATE:
             return self._parse_truncate()
         else:
@@ -458,7 +481,6 @@ class SQLParser:
         # print(f"DEBUG: [Parser._parse_expression] received token: {self.current_token}")
         # --- 调试代码结束 ---
 
-
         if self.current_token.type == TokenType.IDENTIFIER:
             column_name = self.current_token.value
             self._advance()
@@ -614,7 +636,7 @@ class SQLParser:
         view_name = self._expect(TokenType.IDENTIFIER).value
         self._expect(TokenType.AS)
         # 视图定义为剩余SQL（为STRING类型token补回引号，避免字面量丢失）
-        definition_tokens = self.tokens[self.position:]
+        definition_tokens = self.tokens[self.position :]
         parts = []
         for token in definition_tokens:
             if token.type == TokenType.EOF:
@@ -634,3 +656,143 @@ class SQLParser:
         self._expect(TokenType.VIEW)
         view_name = self._expect(TokenType.IDENTIFIER).value
         return DropViewStatement(view_name)
+
+    def _parse_create_user(self) -> CreateUserStatement:
+        """解析 CREATE USER 语句"""
+        self._expect(TokenType.CREATE)
+        self._expect(TokenType.USER)
+        username = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.IDENTIFIED)
+        self._expect(TokenType.BY)
+        password = self._expect(TokenType.STRING).value.strip("'")
+        return CreateUserStatement(username, password)
+
+    def _parse_drop_user(self) -> DropUserStatement:
+        """解析 DROP USER 语句"""
+        self._expect(TokenType.DROP)
+        self._expect(TokenType.USER)
+        username = self._expect(TokenType.IDENTIFIER).value
+        return DropUserStatement(username)
+
+    def _parse_grant(self) -> GrantStatement:
+        """解析 GRANT 语句"""
+        self._expect(TokenType.GRANT)
+
+        # 解析权限类型 - 修复：支持关键字作为权限名
+        if self.current_token.type == TokenType.ALL:
+            privilege = "ALL"
+            self._advance()
+            if self.current_token.type == TokenType.PRIVILEGES:
+                self._advance()
+        else:
+            # 修复：支持SELECT、INSERT等关键字作为权限名
+            if self.current_token.type in (
+                TokenType.SELECT,
+                TokenType.INSERT,
+                TokenType.UPDATE,
+                TokenType.DELETE,
+                TokenType.CREATE,
+                TokenType.DROP,
+            ):
+                privilege = self.current_token.value.upper()
+                self._advance()
+            else:
+                privilege = self._expect(TokenType.IDENTIFIER).value.upper()
+
+        self._expect(TokenType.ON)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.TO)
+        username = self._expect(TokenType.IDENTIFIER).value
+
+        return GrantStatement(privilege, table_name, username)
+
+    def _parse_revoke(self) -> RevokeStatement:
+        """解析 REVOKE 语句"""
+        self._expect(TokenType.REVOKE)
+
+        # 解析权限类型 - 修复：支持关键字作为权限名
+        if self.current_token.type == TokenType.ALL:
+            privilege = "ALL"
+            self._advance()
+            if self.current_token.type == TokenType.PRIVILEGES:
+                self._advance()
+        else:
+            # 修复：支持SELECT、INSERT等关键字作为权限名
+            if self.current_token.type in (
+                TokenType.SELECT,
+                TokenType.INSERT,
+                TokenType.UPDATE,
+                TokenType.DELETE,
+                TokenType.CREATE,
+                TokenType.DROP,
+            ):
+                privilege = self.current_token.value.upper()
+                self._advance()
+            else:
+                privilege = self._expect(TokenType.IDENTIFIER).value.upper()
+
+        self._expect(TokenType.ON)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.FROM)
+        username = self._expect(TokenType.IDENTIFIER).value
+
+        return RevokeStatement(privilege, table_name, username)
+
+    def _parse_begin(self) -> Statement:
+        self._expect(TokenType.BEGIN)
+        if self.current_token and self.current_token.type == TokenType.TRANSACTION:
+            self._advance()
+        return BeginTransaction()
+
+    def _parse_start_transaction(self) -> Statement:
+        self._expect(TokenType.START)
+        self._expect(TokenType.TRANSACTION)
+        return BeginTransaction()
+
+    def _parse_commit(self) -> Statement:
+        self._expect(TokenType.COMMIT)
+        return CommitTransaction()
+
+    def _parse_rollback(self) -> Statement:
+        self._expect(TokenType.ROLLBACK)
+        return RollbackTransaction()
+
+    def _parse_set(self) -> Statement:
+        self._expect(TokenType.SET)
+        # 两种形式： SET AUTOCOMMIT=0|1 或 SET SESSION TRANSACTION ISOLATION LEVEL ...
+        if self.current_token.type == TokenType.AUTOCOMMIT:
+            self._advance()
+            self._expect(TokenType.EQUALS)
+            if self.current_token.type == TokenType.NUMBER and self.current_token.value in ("0", "1"):
+                enabled = self.current_token.value == "1"
+                self._advance()
+                return SetAutocommit(enabled)
+            else:
+                raise SyntaxError("AUTOCOMMIT 只能为 0 或 1")
+        elif self.current_token.type == TokenType.SESSION:
+            self._advance()
+            self._expect(TokenType.TRANSACTION)
+            self._expect(TokenType.ISOLATION)
+            self._expect(TokenType.LEVEL)
+            # 解析隔离级别
+            if self.current_token.type == TokenType.READ:
+                self._advance()
+                if self.current_token.type == TokenType.COMMITTED_KW:
+                    self._advance()
+                    return SetIsolationLevel("READ COMMITTED")
+                elif self.current_token.type == TokenType.UNCOMMITTED_KW:
+                    self._advance()
+                    return SetIsolationLevel("READ UNCOMMITTED")
+                elif self.current_token.type == TokenType.REPEATABLE:
+                    self._advance()
+                    self._expect(TokenType.READ)
+                    return SetIsolationLevel("REPEATABLE READ")
+                else:
+                    raise SyntaxError("未知的隔离级别: READ ...")
+            elif self.current_token.type == TokenType.SERIALIZABLE:
+                self._advance()
+                return SetIsolationLevel("SERIALIZABLE")
+            else:
+                raise SyntaxError("未知的隔离级别")
+        else:
+            raise SyntaxError("仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ...")

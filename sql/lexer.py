@@ -80,6 +80,14 @@ class TokenType(Enum):
     ORDER = "ORDER"
     ASC = "ASC"
     DESC = "DESC"
+    # 在TokenType枚举中添加
+    USER = "USER"
+    IDENTIFIED = "IDENTIFIED"
+    GRANT = "GRANT"
+    REVOKE = "REVOKE"
+    TO = "TO"
+    ALL = "ALL"
+    PRIVILEGES = "PRIVILEGES"
 
     # 布尔值
     TRUE = "TRUE"
@@ -191,6 +199,14 @@ class SQLLexer:
         "ORDER": TokenType.ORDER,
         "ASC": TokenType.ASC,
         "DESC": TokenType.DESC,
+        # 添加这些用户管理关键词：
+        "USER": TokenType.USER,
+        "IDENTIFIED": TokenType.IDENTIFIED,
+        "GRANT": TokenType.GRANT,
+        "REVOKE": TokenType.REVOKE,
+        "TO": TokenType.TO,
+        "ALL": TokenType.ALL,
+        "PRIVILEGES": TokenType.PRIVILEGES,
     }
 
     def __init__(self, sql: str):
