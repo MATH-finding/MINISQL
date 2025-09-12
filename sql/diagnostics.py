@@ -62,6 +62,13 @@ class DiagnosticEngine:
         hints: List[str] = []
         changed = False
 
+        # 在 try_correct 函数开头，统一用 getattr(stmt, 'if_exists', False) 和 getattr(stmt, 'if_not_exists', False) 判断，
+        # 只要 error_message 包含“已存在”且 if_not_exists=True，或包含“不存在”且 if_exists=True，都直接返回 CorrectionResult(None, [友好提示], True)。
+        if hasattr(stmt, 'if_exists') and stmt.if_exists and '不存在' in error_message:
+            return CorrectionResult(None, [f"已忽略：{error_message} (因 IF EXISTS)"], True)
+        if hasattr(stmt, 'if_not_exists') and stmt.if_not_exists and '已存在' in error_message:
+            return CorrectionResult(None, [f"已忽略：{error_message} (因 IF NOT EXISTS)"], True)
+
         # 表名纠错：CREATE/INSERT/UPDATE/DELETE/SELECT FROM / JOIN
         def correct_table_name(name: str) -> Optional[str]:
             names = self.catalog.list_tables() or []

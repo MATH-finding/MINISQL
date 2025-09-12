@@ -343,6 +343,17 @@ class SQLExecutor:
 
     def _execute_create_user(self, stmt: CreateUserStatement) -> Dict[str, Any]:
         """执行CREATE USER"""
+        # 检查用户是否已存在
+        if hasattr(self.catalog, 'list_users') and stmt.username in (self.catalog.list_users() or []):
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_USER",
+                    "username": stmt.username,
+                    "success": True,
+                    "message": f"用户 {stmt.username} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                return {"success": False, "message": f"用户 {stmt.username} 已存在"}
         success = self.catalog.create_user(stmt.username, stmt.password)
 
         if success:
@@ -357,6 +368,17 @@ class SQLExecutor:
 
     def _execute_drop_user(self, stmt: DropUserStatement) -> Dict[str, Any]:
         """执行DROP USER"""
+        # 检查用户是否已存在
+        if hasattr(self.catalog, 'list_users') and stmt.username not in (self.catalog.list_users() or []):
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_USER",
+                    "username": stmt.username,
+                    "success": True,
+                    "message": f"用户 {stmt.username} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                return {"success": False, "message": f"用户 {stmt.username} 不存在"}
         success = self.catalog.drop_user(stmt.username)
 
         if success:
@@ -373,6 +395,17 @@ class SQLExecutor:
             }
 
     def _execute_create_view(self, stmt):
+        # 检查视图是否已存在
+        if hasattr(self.catalog, 'views') and stmt.view_name in getattr(self.catalog, 'views', {}):
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_VIEW",
+                    "view_name": stmt.view_name,
+                    "success": True,
+                    "message": f"视图 {stmt.view_name} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                raise ValueError(f"视图 {stmt.view_name} 已存在")
         self.catalog.create_view(stmt.view_name, stmt.view_definition)
         return {
             "type": "CREATE_VIEW",
@@ -382,6 +415,16 @@ class SQLExecutor:
         }
 
     def _execute_drop_view(self, stmt):
+        if hasattr(self.catalog, 'views') and stmt.view_name not in getattr(self.catalog, 'views', {}):
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_VIEW",
+                    "view_name": stmt.view_name,
+                    "success": True,
+                    "message": f"视图 {stmt.view_name} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                raise ValueError(f"视图 {stmt.view_name} 不存在")
         self.catalog.drop_view(stmt.view_name)
         return {
             "type": "DROP_VIEW",
@@ -663,7 +706,19 @@ class SQLExecutor:
                 pass
 
     def _execute_create_table(self, stmt: CreateTableStatement) -> Dict[str, Any]:
-        """执行CREATE TABLE"""
+        """执行CREATE TABLE，支持 IF NOT EXISTS"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if schema:
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_TABLE",
+                    "table_name": stmt.table_name,
+                    "success": True,
+                    "message": f"表 {stmt.table_name} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                raise ValueError(f"表 {stmt.table_name} 已存在")
+
         columns = []
 
         for col_def in stmt.columns:
@@ -728,11 +783,18 @@ class SQLExecutor:
         }
 
     def _execute_drop_table(self, stmt: DropTableStatement) -> Dict[str, Any]:
-        """执行DROP TABLE"""
-        # 检查表是否存在
+        """执行DROP TABLE，支持 IF EXISTS"""
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise ValueError(f"表 {stmt.table_name} 不存在")
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_TABLE",
+                    "table_name": stmt.table_name,
+                    "success": True,
+                    "message": f"表 {stmt.table_name} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                raise ValueError(f"表 {stmt.table_name} 不存在")
 
         # 删除表相关的所有索引
         if self.index_manager:
@@ -1205,7 +1267,18 @@ class SQLExecutor:
         }
 
     def _execute_create_index(self, stmt: CreateIndexStatement) -> Dict[str, Any]:
-        """执行CREATE INDEX"""
+        """执行CREATE INDEX，支持 IF NOT EXISTS"""
+        # 检查索引是否已存在
+        if self.index_manager and stmt.index_name in getattr(self.index_manager, 'indexes', {}):
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_INDEX",
+                    "index_name": stmt.index_name,
+                    "success": True,
+                    "message": f"索引 {stmt.index_name} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                raise ValueError(f"索引 {stmt.index_name} 已存在")
         if not self.index_manager:
             raise ValueError("索引管理器未初始化")
 
@@ -1239,7 +1312,17 @@ class SQLExecutor:
         }
 
     def _execute_drop_index(self, stmt: DropIndexStatement) -> Dict[str, Any]:
-        """执行DROP INDEX"""
+        """执行DROP INDEX，支持 IF EXISTS"""
+        if self.index_manager and stmt.index_name not in getattr(self.index_manager, 'indexes', {}):
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_INDEX",
+                    "index_name": stmt.index_name,
+                    "success": True,
+                    "message": f"索引 {stmt.index_name} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                raise ValueError(f"索引 {stmt.index_name} 不存在")
         if not self.index_manager:
             raise ValueError("索引管理器未初始化")
 

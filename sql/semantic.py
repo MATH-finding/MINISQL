@@ -14,6 +14,8 @@ from .ast_nodes import (
     ColumnRef,
     AggregateFunction,
     OrderItem,
+    CreateTableStatement,
+    DropTableStatement,
 )
 
 
@@ -42,6 +44,10 @@ class SemanticAnalyzer:
             return self._analyze_update(stmt)
         elif isinstance(stmt, DeleteStatement):
             return self._analyze_delete(stmt)
+        elif isinstance(stmt, CreateTableStatement):
+            return self._analyze_create_table(stmt)
+        elif isinstance(stmt, DropTableStatement):
+            return self._analyze_drop_table(stmt)
         else:
             # 其他语句暂不做语义分析
             return AnalyzedResult(stmt)
@@ -232,4 +238,25 @@ class SemanticAnalyzer:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise SemanticError(f"表 {stmt.table_name} 不存在")
-        return AnalyzedResult(stmt) 
+        return AnalyzedResult(stmt)
+
+    def _analyze_create_table(self, stmt: CreateTableStatement) -> AnalyzedResult:
+        # CREATE TABLE
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if schema and getattr(stmt, 'if_not_exists', False):
+            # 已存在且 IF NOT EXISTS，直接通过
+            return AnalyzedResult(stmt)
+        if schema:
+            raise SemanticError(f"表 {stmt.table_name} 已存在")
+        return AnalyzedResult(stmt)
+
+    def _analyze_drop_table(self, stmt: DropTableStatement) -> AnalyzedResult:
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema and getattr(stmt, 'if_exists', False):
+            # 不存在且 IF EXISTS，直接通过
+            return AnalyzedResult(stmt)
+        if not schema:
+            raise SemanticError(f"表 {stmt.table_name} 不存在")
+        return AnalyzedResult(stmt)
+
+    # 你可以按需为索引、视图、用户等类似扩展 

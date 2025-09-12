@@ -99,26 +99,39 @@ class SQLParser:
         self._advance()
         return token
 
-    def _parse_create_table(self) -> CreateTableStatement:
-        """解析 CREATE TABLE 语句"""
-        self._expect(TokenType.CREATE)
-        self._expect(TokenType.TABLE)
+    def _peek_token_type(self, offset):
+        pos = self.position + offset
+        if 0 <= pos < len(self.tokens):
+            return self.tokens[pos].type
+        return None
 
-        table_name = self._expect(TokenType.IDENTIFIER).value
-        self._expect(TokenType.LEFT_PAREN)
+    # def _parse_create_table(self) -> CreateTableStatement:
+    #     """解析 CREATE TABLE 语句，支持 IF NOT EXISTS"""
+    #     self._expect(TokenType.CREATE)
+    #     if_not_exists = False
+    #     if self.current_token.type == TokenType.IF:
+    #         self._advance()
+    #         if self.current_token.type == TokenType.NOT:
+    #             self._advance()
+    #             self._expect(TokenType.EXISTS)
+    #             if_not_exists = True
+    #     self._expect(TokenType.TABLE)
 
-        columns = []
-        while self.current_token.type != TokenType.RIGHT_PAREN:
-            column = self._parse_column_definition()
-            columns.append(column)
+    #     table_name = self._expect(TokenType.IDENTIFIER).value
+    #     self._expect(TokenType.LEFT_PAREN)
 
-            if self.current_token.type == TokenType.COMMA:
-                self._advance()
-            elif self.current_token.type != TokenType.RIGHT_PAREN:
-                raise SyntaxError("列定义之间需要逗号分隔")
+    #     columns = []
+    #     while self.current_token.type != TokenType.RIGHT_PAREN:
+    #         column = self._parse_column_definition()
+    #         columns.append(column)
 
-        self._expect(TokenType.RIGHT_PAREN)
-        return CreateTableStatement(table_name, columns)
+    #         if self.current_token.type == TokenType.COMMA:
+    #             self._advance()
+    #         elif self.current_token.type != TokenType.RIGHT_PAREN:
+    #             raise SyntaxError("列定义之间需要逗号分隔")
+
+    #     self._expect(TokenType.RIGHT_PAREN)
+    #     return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists)
 
     def _parse_column_definition(self) -> dict:
         """解析列定义，支持DEFAULT、CHECK、FOREIGN KEY"""
@@ -531,56 +544,72 @@ class SQLParser:
         else:
             raise SyntaxError(f"不期望的token: {self.current_token.value}")
 
-    def _parse_create_statement(self) -> Statement:
-        """解析CREATE语句（TABLE或INDEX）"""
-        self._expect(TokenType.CREATE)
+    # def _parse_create_statement(self) -> Statement:
+    #     """解析CREATE语句（TABLE或INDEX）"""
+    #     self._expect(TokenType.CREATE)
 
-        # 检查是否是UNIQUE INDEX
-        is_unique = False
-        if self.current_token and self.current_token.type == TokenType.UNIQUE:
-            is_unique = True
+    #     # 检查是否是UNIQUE INDEX
+    #     is_unique = False
+    #     if self.current_token and self.current_token.type == TokenType.UNIQUE:
+    #         is_unique = True
+    #         self._advance()
+
+    #     if self.current_token.type == TokenType.TABLE:
+    #         # 回退一步，让原有的解析方法处理
+    #         self.position -= 1
+    #         self.current_token = self.tokens[self.position]
+    #         return self._parse_create_table()
+    #     elif self.current_token.type == TokenType.INDEX:
+    #         return self._parse_create_index(is_unique)
+    #     else:
+    #         raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
+
+    def _parse_if_exists_flags(self, support_not=True):
+        """辅助解析 IF [NOT] EXISTS，返回 (if_exists, if_not_exists)"""
+        if_exists = False
+        if_not_exists = False
+        if self.current_token and self.current_token.type == TokenType.IF:
             self._advance()
+            if support_not and self.current_token and self.current_token.type == TokenType.NOT:
+                self._advance()
+                self._expect(TokenType.EXISTS)
+                if_not_exists = True
+            else:
+                self._expect(TokenType.EXISTS)
+                if_exists = True
+        return if_exists, if_not_exists
 
-        if self.current_token.type == TokenType.TABLE:
-            # 回退一步，让原有的解析方法处理
-            self.position -= 1
-            self.current_token = self.tokens[self.position]
-            return self._parse_create_table()
-        elif self.current_token.type == TokenType.INDEX:
-            return self._parse_create_index(is_unique)
-        else:
-            raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
+    # def parse_if_exists(support_not=True):
+    #     def decorator(parse_func):
+    #         def wrapper(self, *args, **kwargs):
+    #             if_exists, if_not_exists = self._parse_if_exists_flags(support_not)
+    #             return parse_func(self, *args, if_exists=if_exists, if_not_exists=if_not_exists, **kwargs)
+    #         return wrapper
+    #     return decorator
 
-    def _parse_create_index(self, is_unique: bool = False) -> CreateIndexStatement:
-        """解析CREATE [UNIQUE] INDEX语句"""
-        self._expect(TokenType.INDEX)
-
-        index_name = self._expect(TokenType.IDENTIFIER).value
-        self._expect(TokenType.ON)
+    def _parse_create_table(self):
+        self._expect(TokenType.TABLE)
+        # 在 CREATE TABLE 之后，在表名之前，解析 IF NOT EXISTS
+        _, if_not_exists = self._parse_if_exists_flags(support_not=True)
         table_name = self._expect(TokenType.IDENTIFIER).value
-
         self._expect(TokenType.LEFT_PAREN)
-        column_name = self._expect(TokenType.IDENTIFIER).value
+        columns = []
+        while self.current_token.type != TokenType.RIGHT_PAREN:
+            column = self._parse_column_definition()
+            columns.append(column)
+            if self.current_token.type == TokenType.COMMA:
+                self._advance()
+            elif self.current_token.type != TokenType.RIGHT_PAREN:
+                raise SyntaxError("列定义之间需要逗号分隔")
         self._expect(TokenType.RIGHT_PAREN)
+        return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists)
 
-        return CreateIndexStatement(index_name, table_name, column_name, is_unique)
-
-    def _parse_drop_statement(self) -> Statement:
-        """解析DROP语句"""
-        self._expect(TokenType.DROP)
-
-        if self.current_token.type == TokenType.INDEX:
-            self._advance()
-            index_name = self._expect(TokenType.IDENTIFIER).value
-            return DropIndexStatement(index_name)
-        elif self.current_token.type == TokenType.TABLE:
-            self._advance()
-            table_name = self._expect(TokenType.IDENTIFIER).value
-            return DropTableStatement(table_name)
-        else:
-            raise SyntaxError(
-                f"DROP语句支持INDEX或TABLE，但得到 {self.current_token.value}"
-            )
+    def _parse_drop_table(self):
+        self._expect(TokenType.TABLE)
+        # 在 DROP TABLE 之后，在表名之前，解析 IF EXISTS
+        if_exists, _ = self._parse_if_exists_flags(support_not=False)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        return DropTableStatement(table_name, if_exists=if_exists)
 
     def _parse_update(self) -> UpdateStatement:
         """解析UPDATE语句: UPDATE table SET col1=val1, col2=val2 WHERE condition"""
@@ -631,55 +660,107 @@ class SQLParser:
 
         return DeleteStatement(table_name, where_clause)
 
-    def _peek_token_type(self, offset):
-        pos = self.position + offset
-        if 0 <= pos < len(self.tokens):
-            return self.tokens[pos].type
-        return None
 
-    def _parse_create_view(self) -> CreateViewStatement:
+    def _parse_create_index(self, is_unique: bool = False):
+        self._expect(TokenType.INDEX)
+        # 在 CREATE INDEX 之后，在表名之前，解析 IF NOT EXISTS
+        _, if_not_exists = self._parse_if_exists_flags(support_not=True)
+
+        index_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.ON)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.LEFT_PAREN)
+        column_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.RIGHT_PAREN)
+        return CreateIndexStatement(index_name, table_name, column_name, is_unique, if_not_exists=if_not_exists)
+
+    def _parse_drop_index(self):
+        self._expect(TokenType.INDEX)
+        # 在 DROP INDEX 之后，在表名之前，解析 IF EXISTS
+        if_exists, _ = self._parse_if_exists_flags(support_not=False)
+        index_name = self._expect(TokenType.IDENTIFIER).value
+        return DropIndexStatement(index_name, if_exists=if_exists)
+
+
+    def _parse_create_view(self):
         self._expect(TokenType.CREATE)
         self._expect(TokenType.VIEW)
+
+        _, if_not_exists = self._parse_if_exists_flags(support_not=True)
+
         view_name = self._expect(TokenType.IDENTIFIER).value
         self._expect(TokenType.AS)
-        # 视图定义为剩余SQL（为STRING类型token补回引号，避免字面量丢失）
-        definition_tokens = self.tokens[self.position :]
+
+        # --- 修改开始 ---
+        # 从当前位置开始，收集tokens直到分号或EOF
+        start_pos = self.position
+        while self.current_token and self.current_token.type != TokenType.SEMICOLON and self.current_token.type != TokenType.EOF:
+            self._advance()
+
+        end_pos = self.position
+        definition_tokens = self.tokens[start_pos:end_pos]
+        # --- 修改结束 ---
+
         parts = []
         for token in definition_tokens:
-            if token.type == TokenType.EOF:
-                continue
+            # 这里原来的逻辑保持不变
             if token.type == TokenType.STRING:
-                # 恢复字符串字面量引号；简单转义单引号为SQL内用法
                 parts.append("'" + token.value.replace("'", "''") + "'")
             else:
                 parts.append(token.value)
-        view_definition = " ".join(parts)
-        # DEBUG: 打印视图定义
-        # print(f"[PARSER DEBUG] CREATE VIEW parsed: name={view_name}, definition=\"{view_definition}\"")
-        return CreateViewStatement(view_name, view_definition)
 
-    def _parse_drop_view(self) -> DropViewStatement:
+        view_definition = " ".join(parts).strip()
+        return CreateViewStatement(view_name, view_definition, if_not_exists=if_not_exists)
+
+    def _parse_drop_view(self):
         self._expect(TokenType.DROP)
         self._expect(TokenType.VIEW)
+        # 在 DROP VIEW 之后，在表名之前，解析 IF EXISTS
+        if_exists, _ = self._parse_if_exists_flags(support_not=False)
         view_name = self._expect(TokenType.IDENTIFIER).value
-        return DropViewStatement(view_name)
+        return DropViewStatement(view_name, if_exists=if_exists)
 
-    def _parse_create_user(self) -> CreateUserStatement:
-        """解析 CREATE USER 语句"""
+
+    def _parse_create_user(self):
         self._expect(TokenType.CREATE)
         self._expect(TokenType.USER)
+        # 在 CREATE USER 之后，在表名之前，解析 IF NOT EXISTS
+        _, if_not_exists = self._parse_if_exists_flags(support_not=True)
         username = self._expect(TokenType.IDENTIFIER).value
         self._expect(TokenType.IDENTIFIED)
         self._expect(TokenType.BY)
         password = self._expect(TokenType.STRING).value.strip("'")
-        return CreateUserStatement(username, password)
+        return CreateUserStatement(username, password, if_not_exists=if_not_exists)
 
-    def _parse_drop_user(self) -> DropUserStatement:
-        """解析 DROP USER 语句"""
+    def _parse_drop_user(self):
         self._expect(TokenType.DROP)
         self._expect(TokenType.USER)
+        # 在 DROP USER 之后，在表名之前，解析 IF EXISTS
+        if_exists, _ = self._parse_if_exists_flags(support_not=False)
         username = self._expect(TokenType.IDENTIFIER).value
-        return DropUserStatement(username)
+        return DropUserStatement(username, if_exists=if_exists)
+
+    # 在 _parse_create_statement/_parse_drop_statement 里分发到上述方法
+    def _parse_create_statement(self):
+        self._expect(TokenType.CREATE)
+        if self.current_token.type == TokenType.UNIQUE:
+            self._advance()
+            return self._parse_create_index(is_unique=True)
+        elif self.current_token.type == TokenType.INDEX:
+            return self._parse_create_index(is_unique=False)
+        elif self.current_token.type == TokenType.TABLE:
+            return self._parse_create_table()
+        else:
+            raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
+
+    def _parse_drop_statement(self):
+        self._expect(TokenType.DROP)
+        if self.current_token.type == TokenType.INDEX:
+            return self._parse_drop_index()
+        elif self.current_token.type == TokenType.TABLE:
+            return self._parse_drop_table()
+        else:
+            raise SyntaxError(f"DROP语句支持INDEX或TABLE，但得到 {self.current_token.value}")
 
     def _parse_grant(self) -> GrantStatement:
         """解析 GRANT 语句"""

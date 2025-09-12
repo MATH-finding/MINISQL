@@ -88,6 +88,9 @@ class TokenType(Enum):
     TO = "TO"
     ALL = "ALL"
     PRIVILEGES = "PRIVILEGES"
+    # 新增：IF EXISTS 支持
+    IF = "IF"
+    EXISTS = "EXISTS"
 
     # 布尔值
     TRUE = "TRUE"
@@ -207,6 +210,9 @@ class SQLLexer:
         "TO": TokenType.TO,
         "ALL": TokenType.ALL,
         "PRIVILEGES": TokenType.PRIVILEGES,
+        # 新增：IF EXISTS 支持
+        "IF": TokenType.IF,
+        "EXISTS": TokenType.EXISTS,
     }
 
     def __init__(self, sql: str):
