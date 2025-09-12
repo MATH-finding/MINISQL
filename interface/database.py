@@ -476,6 +476,26 @@ class SimpleDatabase:
         """刷新所有缓存到磁盘"""
         self.buffer_manager.flush_all()
 
+    def list_all_indexes(self) -> Dict[str, Dict[str, Any]]:
+        """列出所有索引，按表分组"""
+        if not hasattr(self, 'index_manager') or not self.index_manager:
+            return {}
+
+        all_indexes = {}
+        for table_name in self.catalog.list_tables():
+            table_indexes = self.index_manager.get_table_indexes(table_name)
+            if table_indexes:
+                all_indexes[table_name] = {}
+                for index_name in table_indexes:
+                    index_info = self.index_manager.indexes.get(index_name)
+                    if index_info:
+                        all_indexes[table_name][index_name] = {
+                            'column': index_info.column_name,
+                            'unique': index_info.is_unique
+                        }
+
+        return all_indexes
+
     def close(self):
         """关闭数据库连接"""
         try:

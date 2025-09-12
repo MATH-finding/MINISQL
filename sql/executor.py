@@ -131,7 +131,7 @@ class TransactionManager:
 
 
 class SQLExecutor:
-    """SQL执行器，将AST转换为数据库操作"""
+    """SQL执行器，将AST转换为数据库操作（注释已在词法分析阶段去除）"""
 
     _next_session_id = 1
 
@@ -164,21 +164,21 @@ class SQLExecutor:
         if self.txn.isolation_level() == "SERIALIZABLE":
             TableLockManager.acquire_shared(table_name, self.session_id)
             # 在autocommit下，语句结束释放
-    
+
     def _filter_uncommitted_data(self, all_rows: List[Record], table_name: str, reader_txn_id: int, isolation_level: str) -> List[Record]:
         """过滤未提交的数据，只返回已提交的数据"""
         if isolation_level == "READ UNCOMMITTED":
             # 读未提交：返回所有数据
             return all_rows
-        
+
         # 对于READ COMMITTED, REPEATABLE READ, SERIALIZABLE
         # 需要过滤掉其他事务的未提交修改
         committed_rows = []
-        
+
         for row in all_rows:
             # 检查这条记录是否被其他未提交事务修改过
             is_modified_by_other_txn = False
-            
+
             # 获取所有活跃事务
             active_transactions = global_txn_manager.get_active_transactions()
             for txn in active_transactions:
@@ -189,7 +189,7 @@ class SQLExecutor:
                         # 创建主键比较函数
                         def same_primary_key(record1: Dict[str, Any], record2: Dict[str, Any]) -> bool:
                             return record1.get('id') == record2.get('id')
-                        
+
                         if change['type'] == 'UPDATE' and same_primary_key(row.data, change['old_data']):
                             # 这条记录被其他事务修改了，但我们应该显示原始值（如果当前行就是原始值）
                             # 只有当当前行是修改后的值时，才过滤掉
@@ -206,19 +206,19 @@ class SQLExecutor:
                             break
                     if is_modified_by_other_txn:
                         break
-            
+
             if not is_modified_by_other_txn:
                 committed_rows.append(row)
-        
+
         return committed_rows
-    
+
     def _records_match(self, record1: Dict[str, Any], record2: Dict[str, Any]) -> bool:
         """比较两个记录是否完全匹配（所有字段）"""
         if not record1 or not record2:
             return False
         # 比较所有字段
         return record1 == record2
-    
+
     def _apply_transaction_changes(self, txn_id: int):
         """应用事务中的所有修改到表"""
         # 获取事务状态
@@ -228,10 +228,10 @@ class SQLExecutor:
             if t.txn_id == txn_id:
                 txn = t
                 break
-        
+
         if not txn:
             return
-        
+
         # 应用所有修改
         for table_name, changes in txn.pending_changes.items():
             for change in changes:
@@ -241,7 +241,7 @@ class SQLExecutor:
                     # 更新索引
                     if self.index_manager:
                         self.index_manager.insert_into_indexes(table_name, change['new_data'], record_id)
-                
+
                 elif change['type'] == 'UPDATE' and change['new_data']:
                     # 更新记录
                     # 需要找到对应的记录并更新
@@ -254,7 +254,7 @@ class SQLExecutor:
                                 self.index_manager.delete_from_indexes(table_name, change['old_data'], None)
                                 self.index_manager.insert_into_indexes(table_name, change['new_data'], None)
                             break
-                
+
                 elif change['type'] == 'DELETE' and change['old_data']:
                     # 删除记录
                     for page_id, idx, rec in self.table_manager.scan_table_with_locations(table_name):
@@ -328,11 +328,13 @@ class SQLExecutor:
                     # 步骤 2: 应用外部WHERE过滤
                     if ast.where_clause:
                         # print(f"[EXECUTOR DEBUG] applying outer WHERE on {len(current_rows)} rows: {ast.where_clause}")
-                        current_rows = [
-                            row
-                            for row in current_rows
-                            if self._evaluate_condition(ast.where_clause, row)
-                        ]
+                        filtered_rows = []
+                        for row in current_rows:
+                            # 确保row是dict类型，如果不是则转换
+                            row_dict = dict(row) if hasattr(row, '__dict__') or hasattr(row, 'data') else row
+                            if self._evaluate_condition(ast.where_clause, row_dict):
+                                filtered_rows.append(row_dict)
+                        current_rows = filtered_rows
                         # print(f"[EXECUTOR DEBUG] rows after WHERE: {len(current_rows)}")
 
                     # 步骤 3: 投影
@@ -597,7 +599,16 @@ class SQLExecutor:
             for index in unique_indexes:
                 index_keys = [record_data.get(col) for col in index.columns]
                 if all(key is not None for key in index_keys):
-                    existing = self.index_manager.lookup(index.name, index_keys)
+                    if hasattr(self.index_manager, 'lookup'):
+                        existing = self.index_manager.lookup(index.name, index_keys)
+                    else:
+                        # 简化的唯一性检查：扫描表
+                        all_records = self.table_manager.scan_table(stmt.table_name)
+                        existing = any(
+                            all(record.data.get(col) == key for col, key in zip(index.columns, index_keys))
+                            for record in all_records
+                        )
+
                     if existing:
                         constraint_columns = ", ".join(index.columns)
                         raise ValueError(
@@ -641,10 +652,10 @@ class SQLExecutor:
             if self.txn.in_txn() and self.txn.current_txn_id() is not None:
                 # 记录到全局事务管理器
                 global_txn_manager.record_table_modification(
-                    self.txn.current_txn_id(), 
-                    stmt.table_name, 
-                    'INSERT', 
-                    None, 
+                    self.txn.current_txn_id(),
+                    stmt.table_name,
+                    'INSERT',
+                    None,
                     record_data
                 )
                 page_id, ridx = None, None
@@ -996,10 +1007,10 @@ class SQLExecutor:
                 if self.txn.in_txn() and self.txn.current_txn_id() is not None:
                     # 记录到全局事务管理器
                     global_txn_manager.record_table_modification(
-                        self.txn.current_txn_id(), 
-                        stmt.table_name, 
-                        'INSERT', 
-                        None, 
+                        self.txn.current_txn_id(),
+                        stmt.table_name,
+                        'INSERT',
+                        None,
                         record_data
                     )
                     inserted_count += 1
@@ -1056,7 +1067,7 @@ class SQLExecutor:
                         # 需要合并已提交的数据和所有未提交的修改
                         all_rows = self.table_manager.scan_table(from_table)
                         base_records = all_rows
-                        
+
                         # 添加所有其他事务的未提交修改
                         active_transactions = global_txn_manager.get_active_transactions()
                         for txn in active_transactions:
@@ -1072,7 +1083,7 @@ class SQLExecutor:
                                                 break
                                     elif change['type'] == 'DELETE' and change['old_data']:
                                         # 移除被删除的记录
-                                        base_records = [row for row in base_records 
+                                        base_records = [row for row in base_records
                                                       if not self._records_match(row.data, change['old_data'])]
                     else:
                         # READ COMMITTED, REPEATABLE READ, SERIALIZABLE: 只能看到已提交的数据
@@ -1085,7 +1096,7 @@ class SQLExecutor:
                     if level == "READ UNCOMMITTED":
                         # 读未提交：可以看到所有数据，包括未提交的修改
                         base_records = all_rows
-                        
+
                         # 添加所有其他事务的未提交修改
                         active_transactions = global_txn_manager.get_active_transactions()
                         for txn in active_transactions:
@@ -1101,7 +1112,7 @@ class SQLExecutor:
                                                 break
                                     elif change['type'] == 'DELETE' and change['old_data']:
                                         # 移除被删除的记录
-                                        base_records = [row for row in base_records 
+                                        base_records = [row for row in base_records
                                                       if not self._records_match(row.data, change['old_data'])]
                     else:
                         # 其他隔离级别：只能看到已提交的数据
@@ -1563,10 +1574,10 @@ class SQLExecutor:
                     if self.txn.in_txn() and self.txn.current_txn_id() is not None:
                         # 记录到全局事务管理器
                         global_txn_manager.record_table_modification(
-                            self.txn.current_txn_id(), 
-                            stmt.table_name, 
-                            'UPDATE', 
-                            old_data, 
+                            self.txn.current_txn_id(),
+                            stmt.table_name,
+                            'UPDATE',
+                            old_data,
                             new_data
                         )
                         # 写入undo
@@ -1623,10 +1634,10 @@ class SQLExecutor:
                     if self.txn.in_txn() and self.txn.current_txn_id() is not None:
                         # 记录到全局事务管理器
                         global_txn_manager.record_table_modification(
-                            self.txn.current_txn_id(), 
-                            stmt.table_name, 
-                            'DELETE', 
-                            old_data, 
+                            self.txn.current_txn_id(),
+                            stmt.table_name,
+                            'DELETE',
+                            old_data,
                             None
                         )
                         # 写入undo
@@ -1729,3 +1740,24 @@ class SQLExecutor:
                 "message": f"不支持的SHOW类型: {stmt.show_type}",
                 "data": []
             }
+
+    def execute_sqls(self, sqls: str) -> list:
+        """支持多条SQL（以英文分号分隔）依次执行，返回所有结果"""
+        stmts = [s.strip() for s in sqls.split(';') if s.strip()]
+        results = []
+        for stmt in stmts:
+            # 每条语句补英文分号
+            if not stmt.endswith(';'):
+                stmt += ';'
+            try:
+                from sql.lexer import SQLLexer
+                from sql.parser import SQLParser
+                lexer = SQLLexer(stmt)
+                tokens = lexer.tokenize()
+                parser = SQLParser(tokens)
+                ast = parser.parse()
+                res = self.execute(ast)
+                results.append(res)
+            except Exception as e:
+                results.append({"success": False, "error": str(e), "message": f"SQL执行失败: {e}"})
+        return results

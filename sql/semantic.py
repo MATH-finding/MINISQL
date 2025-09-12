@@ -29,6 +29,7 @@ class AnalyzedResult:
 
 
 class SemanticAnalyzer:
+    """语义分析器：不处理注释，注释已在词法分析阶段去除。仅英文分号;被识别为语句结束符，中文分号；不被识别。"""
     def __init__(self, catalog: SystemCatalog):
         self.catalog = catalog
 

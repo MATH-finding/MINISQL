@@ -199,38 +199,42 @@ class SQLShell:
         return False
         
     def _get_input(self) -> Optional[str]:
-        """获取用户输入（支持 prompt_toolkit 联想/补全）"""
+        """获取用户输入（多行，空行提交）"""
+        lines = []
+        prompt_main = "SQL> "
+        prompt_more = "...> "
         try:
-            if HAS_PT and self._pt_session:
-                line = self._pt_session.prompt("SQL> ")
-            else:
-                line = input("SQL> ")
-            line = line.strip()
-
-            # 处理多行输入
-            if line and not line.endswith(";"):
-                lines = [line]
-                while True:
-                    cont = None
-                    if HAS_PT and self._pt_session:
-                        cont = self._pt_session.prompt("...> ")
-                    else:
-                        cont = input("...> ")
-                    cont = cont.strip()
-                    if not cont:
-                        break
-                    lines.append(cont)
-                    if cont.endswith(";"):
-                        break
-                line = " ".join(lines)
-
-            return line
-        except:
+            while True:
+                if HAS_PT and self._pt_session:
+                    line = self._pt_session.prompt(prompt_main if not lines else prompt_more)
+                else:
+                    line = input(prompt_main if not lines else prompt_more)
+                # 只输入回车（空行）表示输入结束
+                if not line.strip() and lines:
+                    break
+                # 首行和续行都允许注释
+                line = line.split('#', 1)[0].rstrip()
+                if line.strip():
+                    lines.append(line)
+        except EOFError:
             return None
+        except KeyboardInterrupt:
+            print()
+            return None
+        if not lines:
+            return None
+        return " ".join(lines)
 
     def _process_command(self, command: str):
         """处理命令 - 添加用户管理命令"""
         command = command.strip()
+        if not command:
+            return
+
+        # 支持#注释，自动忽略#及其后内容
+        if '#' in command:
+            command = command.split('#', 1)[0].rstrip()
+
         if not command:
             return
 
@@ -462,12 +466,20 @@ class SQLShell:
             return
 
         # SQL语句处理
-        if command.endswith(";"):
-            command = command[:-1]  # 移除分号
-
-        print()  # 空行
-        result = self.database.execute_sql(command)
-        format_query_result(result)
+        # 支持多条SQL（英文分号分隔）依次执行
+        if '；' in command:
+            print("❌ 错误: 仅支持英文分号 ';' 作为语句结束符，检测到中文分号 '；'")
+            return
+        if not command.rstrip().endswith(';'):
+            print("❌ 错误: SQL语句必须以英文分号 ';' 结尾")
+            return
+        stmts = [s.strip() for s in command.split(';') if s.strip()]
+        for stmt in stmts:
+            if not stmt:
+                continue
+            result = self.database.execute_sql(stmt + ';')
+            format_query_result(result)
+        return
 
         # 调试信息输出
         if (
