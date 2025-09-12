@@ -88,6 +88,7 @@ class TokenType(Enum):
     TO = "TO"
     ALL = "ALL"
     PRIVILEGES = "PRIVILEGES"
+    SHOW = "SHOW"
 
     # 布尔值
     TRUE = "TRUE"
@@ -207,6 +208,7 @@ class SQLLexer:
         "TO": TokenType.TO,
         "ALL": TokenType.ALL,
         "PRIVILEGES": TokenType.PRIVILEGES,
+        "SHOW": TokenType.SHOW,
     }
 
     def __init__(self, sql: str):

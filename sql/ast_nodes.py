@@ -390,3 +390,13 @@ class SetIsolationLevel(Statement):
 
     def __repr__(self):
         return f"SET SESSION TRANSACTION ISOLATION LEVEL {self.level}"
+
+
+class ShowStatement(Statement):
+    """SHOW语句"""
+
+    def __init__(self, show_type: str):
+        self.show_type = show_type  # 'AUTOCOMMIT', 'ISOLATION_LEVEL', etc.
+
+    def __repr__(self):
+        return f"SHOW {self.show_type}"

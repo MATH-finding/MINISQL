@@ -8,6 +8,7 @@ from storage import Record
 from catalog import DataType, ColumnDefinition, SystemCatalog
 from table import TableManager
 from .ast_nodes import *
+from .transaction_state import global_txn_manager
 
 
 class TableLockManager:
@@ -71,7 +72,7 @@ class TransactionManager:
     def autocommit(self) -> bool:
         return self._autocommit
 
-    def begin(self) -> int:
+    def begin(self, session_id: int = 0) -> int:
         if self._in_txn:
             # MySQL 多次BEGIN通常报错或忽略，这里报错
             raise ValueError("已在事务中")
@@ -80,12 +81,17 @@ class TransactionManager:
         self._next_txn_id += 1
         # 新事务清空快照
         self._rr_snapshot.clear()
+        # 注册到全局事务管理器
+        global_txn_manager.register_transaction(self._current_txn_id, session_id, self._isolation_level)
         return self._current_txn_id
 
     def commit(self):
         if not self._in_txn:
             # COMMIT 在非事务中为 no-op；为了明确，这里也允许静默成功
             return
+        # 提交到全局事务管理器
+        if self._current_txn_id is not None:
+            global_txn_manager.commit_transaction(self._current_txn_id)
         # TODO: 这里可集成WAL fsync
         self._in_txn = False
         self._current_txn_id = None
@@ -95,6 +101,9 @@ class TransactionManager:
         # 支持回滚
         if not self._in_txn:
             raise ValueError("当前不在事务中，无法回滚")
+        # 回滚全局事务管理器中的事务
+        if self._current_txn_id is not None:
+            global_txn_manager.rollback_transaction(self._current_txn_id)
         self._in_txn = False
         self._current_txn_id = None
         self._rr_snapshot.clear()
@@ -155,6 +164,106 @@ class SQLExecutor:
         if self.txn.isolation_level() == "SERIALIZABLE":
             TableLockManager.acquire_shared(table_name, self.session_id)
             # 在autocommit下，语句结束释放
+    
+    def _filter_uncommitted_data(self, all_rows: List[Record], table_name: str, reader_txn_id: int, isolation_level: str) -> List[Record]:
+        """过滤未提交的数据，只返回已提交的数据"""
+        if isolation_level == "READ UNCOMMITTED":
+            # 读未提交：返回所有数据
+            return all_rows
+        
+        # 对于READ COMMITTED, REPEATABLE READ, SERIALIZABLE
+        # 需要过滤掉其他事务的未提交修改
+        committed_rows = []
+        
+        for row in all_rows:
+            # 检查这条记录是否被其他未提交事务修改过
+            is_modified_by_other_txn = False
+            
+            # 获取所有活跃事务
+            active_transactions = global_txn_manager.get_active_transactions()
+            for txn in active_transactions:
+                # 如果是非事务上下文，reader_txn_id为None，需要过滤所有活跃事务的修改
+                if (reader_txn_id is None or txn.txn_id != reader_txn_id) and table_name in txn.pending_changes:
+                    # 检查这条记录是否被该事务修改过
+                    for change in txn.pending_changes[table_name]:
+                        # 创建主键比较函数
+                        def same_primary_key(record1: Dict[str, Any], record2: Dict[str, Any]) -> bool:
+                            return record1.get('id') == record2.get('id')
+                        
+                        if change['type'] == 'UPDATE' and same_primary_key(row.data, change['old_data']):
+                            # 这条记录被其他事务修改了，但我们应该显示原始值（如果当前行就是原始值）
+                            # 只有当当前行是修改后的值时，才过滤掉
+                            if self._records_match(row.data, change['new_data']):
+                                is_modified_by_other_txn = True
+                                break
+                        elif change['type'] == 'DELETE' and same_primary_key(row.data, change['old_data']):
+                            # 这条记录被其他事务删除了，不应该看到
+                            is_modified_by_other_txn = True
+                            break
+                        elif change['type'] == 'INSERT' and same_primary_key(row.data, change['new_data']):
+                            # 这条记录被其他事务插入了，不应该看到
+                            is_modified_by_other_txn = True
+                            break
+                    if is_modified_by_other_txn:
+                        break
+            
+            if not is_modified_by_other_txn:
+                committed_rows.append(row)
+        
+        return committed_rows
+    
+    def _records_match(self, record1: Dict[str, Any], record2: Dict[str, Any]) -> bool:
+        """比较两个记录是否完全匹配（所有字段）"""
+        if not record1 or not record2:
+            return False
+        # 比较所有字段
+        return record1 == record2
+    
+    def _apply_transaction_changes(self, txn_id: int):
+        """应用事务中的所有修改到表"""
+        # 获取事务状态
+        active_transactions = global_txn_manager.get_active_transactions()
+        txn = None
+        for t in active_transactions:
+            if t.txn_id == txn_id:
+                txn = t
+                break
+        
+        if not txn:
+            return
+        
+        # 应用所有修改
+        for table_name, changes in txn.pending_changes.items():
+            for change in changes:
+                if change['type'] == 'INSERT' and change['new_data']:
+                    # 插入记录
+                    record_id = self.table_manager.insert_record(table_name, change['new_data'])
+                    # 更新索引
+                    if self.index_manager:
+                        self.index_manager.insert_into_indexes(table_name, change['new_data'], record_id)
+                
+                elif change['type'] == 'UPDATE' and change['new_data']:
+                    # 更新记录
+                    # 需要找到对应的记录并更新
+                    for page_id, idx, rec in self.table_manager.scan_table_with_locations(table_name):
+                        if self._records_match(rec.data, change['old_data']):
+                            self.table_manager.update_at(table_name, page_id, idx, change['new_data'])
+                            # 更新索引
+                            if self.index_manager:
+                                # 先删除旧索引，再插入新索引
+                                self.index_manager.delete_from_indexes(table_name, change['old_data'], None)
+                                self.index_manager.insert_into_indexes(table_name, change['new_data'], None)
+                            break
+                
+                elif change['type'] == 'DELETE' and change['old_data']:
+                    # 删除记录
+                    for page_id, idx, rec in self.table_manager.scan_table_with_locations(table_name):
+                        if self._records_match(rec.data, change['old_data']):
+                            self.table_manager.delete_at(table_name, page_id, idx)
+                            # 更新索引
+                            if self.index_manager:
+                                self.index_manager.delete_from_indexes(table_name, change['old_data'], None)
+                            break
 
     def _maybe_lock_exclusive(self, table_name: str):
         if self.txn.isolation_level() == "SERIALIZABLE":
@@ -271,11 +380,14 @@ class SQLExecutor:
                 result = self._execute_delete_with_undo(ast)
             # 事务管理语句
             elif isinstance(ast, BeginTransaction):
-                txn_id = self.txn.begin()
+                txn_id = self.txn.begin(self.session_id)
                 return {"type": "BEGIN", "success": True, "message": f"事务已开始 (id={txn_id})"}
             elif isinstance(ast, CommitTransaction):
                 # 立即写入方案下，COMMIT 只需结束事务与释放资源
                 active_id = self.txn.current_txn_id()
+                # 在提交前，应用所有修改到表
+                if active_id is not None:
+                    self._apply_transaction_changes(active_id)
                 self.txn.commit()
                 if active_id is not None:
                     self._undo_log.pop(active_id, None)
@@ -305,6 +417,8 @@ class SQLExecutor:
                 self.txn.set_isolation_level(ast.level)
                 TableLockManager.release_all_for_session(self.session_id)
                 return {"type": "SET", "success": True, "message": f"ISOLATION LEVEL {ast.level}"}
+            elif isinstance(ast, ShowStatement):
+                return self._execute_show(ast)
             else:
                 raise ValueError(f"不支持的语句类型: {type(ast)}")
 
@@ -523,46 +637,59 @@ class SQLExecutor:
                                 f"外键约束不满足: {column.name} -> {ref_table}({ref_column})"
                             )
 
-            # 实际插入
-            if hasattr(self.table_manager, 'insert_record_with_location'):
-                loc = self.table_manager.insert_record_with_location(stmt.table_name, record_data)
-                if not loc:
-                    raise ValueError("插入记录失败")
-                page_id, ridx = loc
-                record_id = (page_id, ridx)
-            else:
-                # 获取插入前的记录数，作为新记录的ID
-                all_records = self.table_manager.scan_table(stmt.table_name)
-                record_id = len(all_records)  # 新记录的ID
-
-                # 插入记录到表中
-                self.table_manager.insert_record(stmt.table_name, record_data)
+            # 对于事务中的INSERT，不直接插入到表，而是记录到事务状态
+            if self.txn.in_txn() and self.txn.current_txn_id() is not None:
+                # 记录到全局事务管理器
+                global_txn_manager.record_table_modification(
+                    self.txn.current_txn_id(), 
+                    stmt.table_name, 
+                    'INSERT', 
+                    None, 
+                    record_data
+                )
                 page_id, ridx = None, None
-
-            # 索引维护
-            if self.index_manager:
-                if hasattr(self.index_manager, 'insert_into_indexes'):
-                    self.index_manager.insert_into_indexes(stmt.table_name, record_data, record_id)
+                record_id = None
+            else:
+                # 非事务上下文，直接插入到表
+                if hasattr(self.table_manager, 'insert_record_with_location'):
+                    loc = self.table_manager.insert_record_with_location(stmt.table_name, record_data)
+                    if not loc:
+                        raise ValueError("插入记录失败")
+                    page_id, ridx = loc
+                    record_id = (page_id, ridx)
                 else:
-                    # 兼容老版本索引管理器
-                    table_indexes = self.index_manager.get_table_indexes(stmt.table_name)
-                    for index_name in table_indexes:
-                        index_info = self.index_manager.indexes.get(index_name)
-                        if index_info and index_info.column_name in record_data:
-                            btree = self.index_manager.get_index(index_name)
-                            if btree:
-                                key = record_data[index_info.column_name]
-                                btree.insert(key, record_id)
+                    # 获取插入前的记录数，作为新记录的ID
+                    all_records = self.table_manager.scan_table(stmt.table_name)
+                    record_id = len(all_records)  # 新记录的ID
 
-            # 若在事务中，记录补偿删除的 Undo
-            if self.txn.in_txn():
-                if page_id is not None and ridx is not None:
-                    self._push_undo({
-                        "type": "INSERT",
-                        "table": stmt.table_name,
-                        "page_id": page_id,
-                        "index": ridx,
-                    })
+                    # 插入记录到表中
+                    self.table_manager.insert_record(stmt.table_name, record_data)
+                    page_id, ridx = None, None
+
+                # 索引维护
+                if self.index_manager:
+                    if hasattr(self.index_manager, 'insert_into_indexes'):
+                        self.index_manager.insert_into_indexes(stmt.table_name, record_data, record_id)
+                    else:
+                        # 兼容老版本索引管理器
+                        table_indexes = self.index_manager.get_table_indexes(stmt.table_name)
+                        for index_name in table_indexes:
+                            index_info = self.index_manager.indexes.get(index_name)
+                            if index_info and index_info.column_name in record_data:
+                                btree = self.index_manager.get_index(index_name)
+                                if btree:
+                                    key = record_data[index_info.column_name]
+                                    btree.insert(key, record_id)
+
+                # 若在事务中，记录补偿删除的 Undo
+                if self.txn.in_txn():
+                    if page_id is not None and ridx is not None:
+                        self._push_undo({
+                            "type": "INSERT",
+                            "table": stmt.table_name,
+                            "page_id": page_id,
+                            "index": ridx,
+                        })
 
             inserted_count += 1
 
@@ -865,17 +992,30 @@ class SQLExecutor:
                             )
             # 插入记录
             try:
-                record_id = self.table_manager.insert_record(
-                    stmt.table_name, record_data
-                )
-
-                # 新增：如果有索引管理器，同时更新索引
-                if self.index_manager:
-                    self.index_manager.insert_into_indexes(
-                        stmt.table_name, record_data, record_id
+                # 对于事务中的INSERT，不直接插入到表，而是记录到事务状态
+                if self.txn.in_txn() and self.txn.current_txn_id() is not None:
+                    # 记录到全局事务管理器
+                    global_txn_manager.record_table_modification(
+                        self.txn.current_txn_id(), 
+                        stmt.table_name, 
+                        'INSERT', 
+                        None, 
+                        record_data
+                    )
+                    inserted_count += 1
+                else:
+                    # 非事务上下文，直接插入到表
+                    record_id = self.table_manager.insert_record(
+                        stmt.table_name, record_data
                     )
 
-                inserted_count += 1
+                    # 新增：如果有索引管理器，同时更新索引
+                    if self.index_manager:
+                        self.index_manager.insert_into_indexes(
+                            stmt.table_name, record_data, record_id
+                        )
+
+                    inserted_count += 1
             except Exception as e:
                 raise ValueError(f"插入记录失败: {str(e)}")
 
@@ -905,32 +1045,88 @@ class SQLExecutor:
                 # 读取基线集合：取决于隔离级别
                 base_records: List[Record] = []
                 level = self.txn.isolation_level()
-                in_txn_ctx = self.txn.in_txn() and not self.txn.autocommit()
+                # 修复：在显式事务中，无论autocommit状态如何，都应该能看到当前事务的修改
+                in_txn_ctx = self.txn.in_txn()
 
-                # REPEATABLE READ / SERIALIZABLE: 第一次读时拍快照
-                if in_txn_ctx and level in ("REPEATABLE READ", "SERIALIZABLE"):
-                    snap = self.txn.get_rr_snapshot_for_table(from_table)
-                    if snap is None:
-                        committed_rows = self.table_manager.scan_table(from_table)
-                        snapshot_rows = [dict(r.data) for r in committed_rows]
-                        self.txn.set_rr_snapshot_for_table(from_table, snapshot_rows)
-                        snap = snapshot_rows
-                    # 基线用快照
-                    base_dict_rows = snap
-                    base_records = [Record(dict(row)) for row in base_dict_rows]
+                # 根据隔离级别获取可见数据
+                if in_txn_ctx:
+                    txn_id = self.txn.current_txn_id()
+                    if level == "READ UNCOMMITTED":
+                        # 读未提交：可以看到所有数据，包括未提交的修改
+                        # 需要合并已提交的数据和所有未提交的修改
+                        all_rows = self.table_manager.scan_table(from_table)
+                        base_records = all_rows
+                        
+                        # 添加所有其他事务的未提交修改
+                        active_transactions = global_txn_manager.get_active_transactions()
+                        for txn in active_transactions:
+                            if txn.txn_id != txn_id and from_table in txn.pending_changes:
+                                for change in txn.pending_changes[from_table]:
+                                    if change['type'] == 'INSERT' and change['new_data']:
+                                        base_records.append(Record(dict(change['new_data'])))
+                                    elif change['type'] == 'UPDATE' and change['new_data']:
+                                        # 替换已存在的记录
+                                        for i, row in enumerate(base_records):
+                                            if self._records_match(row.data, change['old_data']):
+                                                base_records[i] = Record(dict(change['new_data']))
+                                                break
+                                    elif change['type'] == 'DELETE' and change['old_data']:
+                                        # 移除被删除的记录
+                                        base_records = [row for row in base_records 
+                                                      if not self._records_match(row.data, change['old_data'])]
+                    else:
+                        # READ COMMITTED, REPEATABLE READ, SERIALIZABLE: 只能看到已提交的数据
+                        # 需要过滤掉其他事务的未提交修改
+                        all_rows = self.table_manager.scan_table(from_table)
+                        base_records = self._filter_uncommitted_data(all_rows, from_table, txn_id, level)
                 else:
-                    # READ COMMITTED / READ UNCOMMITTED: 每次读最新已提交
-                    committed_rows = self.table_manager.scan_table(from_table)
-                    base_records = committed_rows
+                    # 非事务上下文
+                    all_rows = self.table_manager.scan_table(from_table)
+                    if level == "READ UNCOMMITTED":
+                        # 读未提交：可以看到所有数据，包括未提交的修改
+                        base_records = all_rows
+                        
+                        # 添加所有其他事务的未提交修改
+                        active_transactions = global_txn_manager.get_active_transactions()
+                        for txn in active_transactions:
+                            if from_table in txn.pending_changes:
+                                for change in txn.pending_changes[from_table]:
+                                    if change['type'] == 'INSERT' and change['new_data']:
+                                        base_records.append(Record(dict(change['new_data'])))
+                                    elif change['type'] == 'UPDATE' and change['new_data']:
+                                        # 替换已存在的记录
+                                        for i, row in enumerate(base_records):
+                                            if self._records_match(row.data, change['old_data']):
+                                                base_records[i] = Record(dict(change['new_data']))
+                                                break
+                                    elif change['type'] == 'DELETE' and change['old_data']:
+                                        # 移除被删除的记录
+                                        base_records = [row for row in base_records 
+                                                      if not self._records_match(row.data, change['old_data'])]
+                    else:
+                        # 其他隔离级别：只能看到已提交的数据
+                        base_records = self._filter_uncommitted_data(all_rows, from_table, None, level)
 
-                # 当前事务缓冲数据（仅当前会话可见）
+                # 当前事务的修改（仅当前会话可见）
                 extra_rows: List[Record] = []
                 if in_txn_ctx:
                     txn_id = self.txn.current_txn_id()
-                    for item in self._pending_inserts.get(txn_id, []):
-                        if item["table"] == from_table:
-                            row = item["data"]
-                            extra_rows.append(Record(dict(row)))
+                    # 获取当前事务的修改
+                    active_transactions = global_txn_manager.get_active_transactions()
+                    for txn in active_transactions:
+                        if txn.txn_id == txn_id and from_table in txn.pending_changes:
+                            for change in txn.pending_changes[from_table]:
+                                if change['type'] == 'INSERT' and change['new_data']:
+                                    extra_rows.append(Record(dict(change['new_data'])))
+                                elif change['type'] == 'UPDATE' and change['new_data']:
+                                    # 更新现有记录
+                                    for i, record in enumerate(base_records):
+                                        if self._records_match(record.data, change['old_data']):
+                                            base_records[i] = Record(dict(change['new_data']))
+                                            break
+                                elif change['type'] == 'DELETE' and change['old_data']:
+                                    # 删除记录
+                                    base_records = [r for r in base_records if not self._records_match(r.data, change['old_data'])]
 
                 return base_records + extra_rows, from_table
             elif isinstance(from_table, JoinClause):
@@ -1363,8 +1559,16 @@ class SQLExecutor:
                     old_data = dict(rec.data)
                     new_data = dict(old_data)
                     new_data.update(updates)
-                    if self.table_manager.update_at(stmt.table_name, page_id, idx, new_data):
-                        updated += 1
+                    # 对于事务中的UPDATE，不直接修改表，而是记录到事务状态
+                    if self.txn.in_txn() and self.txn.current_txn_id() is not None:
+                        # 记录到全局事务管理器
+                        global_txn_manager.record_table_modification(
+                            self.txn.current_txn_id(), 
+                            stmt.table_name, 
+                            'UPDATE', 
+                            old_data, 
+                            new_data
+                        )
                         # 写入undo
                         self._push_undo({
                             "type": "UPDATE",
@@ -1373,6 +1577,11 @@ class SQLExecutor:
                             "index": idx,
                             "old_data": old_data,
                         })
+                        updated += 1
+                    else:
+                        # 非事务上下文，直接修改表
+                        if self.table_manager.update_at(stmt.table_name, page_id, idx, new_data):
+                            updated += 1
         else:
             # 兼容版本
             condition_func = None
@@ -1410,8 +1619,17 @@ class SQLExecutor:
             for page_id, idx, rec in self.table_manager.scan_table_with_locations(stmt.table_name):
                 if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
                     old_data = dict(rec.data)
-                    if self.table_manager.delete_at(stmt.table_name, page_id, idx):
-                        deleted += 1
+                    # 对于事务中的DELETE，不直接删除表，而是记录到事务状态
+                    if self.txn.in_txn() and self.txn.current_txn_id() is not None:
+                        # 记录到全局事务管理器
+                        global_txn_manager.record_table_modification(
+                            self.txn.current_txn_id(), 
+                            stmt.table_name, 
+                            'DELETE', 
+                            old_data, 
+                            None
+                        )
+                        # 写入undo
                         self._push_undo({
                             "type": "DELETE",
                             "table": stmt.table_name,
@@ -1419,6 +1637,11 @@ class SQLExecutor:
                             "index": idx,
                             "old_data": old_data,
                         })
+                        deleted += 1
+                    else:
+                        # 非事务上下文，直接删除表
+                        if self.table_manager.delete_at(stmt.table_name, page_id, idx):
+                            deleted += 1
         else:
             # 兼容版本
             condition_func = None
@@ -1480,3 +1703,29 @@ class SQLExecutor:
 
         else:
             raise ValueError(f"不支持的条件类型: {type(condition)}")
+
+    def _execute_show(self, stmt: ShowStatement) -> Dict[str, Any]:
+        """执行SHOW语句"""
+        if stmt.show_type == "AUTOCOMMIT":
+            autocommit = self.txn.autocommit()
+            return {
+                "type": "SHOW",
+                "success": True,
+                "message": f"autocommit = {'1' if autocommit else '0'}",
+                "data": [{"autocommit": autocommit}]
+            }
+        elif stmt.show_type == "ISOLATION_LEVEL":
+            isolation = self.txn.isolation_level()
+            return {
+                "type": "SHOW",
+                "success": True,
+                "message": f"isolation level = {isolation}",
+                "data": [{"isolation_level": isolation}]
+            }
+        else:
+            return {
+                "type": "SHOW",
+                "success": False,
+                "message": f"不支持的SHOW类型: {stmt.show_type}",
+                "data": []
+            }

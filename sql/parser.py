@@ -73,6 +73,8 @@ class SQLParser:
             return self._parse_set()
         elif self.current_token.type == TokenType.TRUNCATE:
             return self._parse_truncate()
+        elif self.current_token.type == TokenType.SHOW:
+            return self._parse_show()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
 
@@ -783,12 +785,12 @@ class SQLParser:
                 elif self.current_token.type == TokenType.UNCOMMITTED_KW:
                     self._advance()
                     return SetIsolationLevel("READ UNCOMMITTED")
-                elif self.current_token.type == TokenType.REPEATABLE:
-                    self._advance()
-                    self._expect(TokenType.READ)
-                    return SetIsolationLevel("REPEATABLE READ")
                 else:
                     raise SyntaxError("未知的隔离级别: READ ...")
+            elif self.current_token.type == TokenType.REPEATABLE:
+                self._advance()
+                self._expect(TokenType.READ)
+                return SetIsolationLevel("REPEATABLE READ")
             elif self.current_token.type == TokenType.SERIALIZABLE:
                 self._advance()
                 return SetIsolationLevel("SERIALIZABLE")
@@ -796,3 +798,17 @@ class SQLParser:
                 raise SyntaxError("未知的隔离级别")
         else:
             raise SyntaxError("仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ...")
+
+    def _parse_show(self) -> ShowStatement:
+        """解析SHOW语句"""
+        self._expect(TokenType.SHOW)
+        
+        if self.current_token.type == TokenType.AUTOCOMMIT:
+            self._advance()
+            return ShowStatement("AUTOCOMMIT")
+        elif self.current_token.type == TokenType.ISOLATION:
+            self._advance()
+            self._expect(TokenType.LEVEL)
+            return ShowStatement("ISOLATION_LEVEL")
+        else:
+            raise SyntaxError("仅支持: SHOW AUTOCOMMIT 或 SHOW ISOLATION LEVEL")
