@@ -122,7 +122,7 @@ class TransactionManager:
 
 
 class SQLExecutor:
-    """SQL执行器，将AST转换为数据库操作"""
+    """SQL执行器，将AST转换为数据库操作（注释已在词法分析阶段去除）"""
 
     _next_session_id = 1
 
@@ -219,11 +219,13 @@ class SQLExecutor:
                     # 步骤 2: 应用外部WHERE过滤
                     if ast.where_clause:
                         # print(f"[EXECUTOR DEBUG] applying outer WHERE on {len(current_rows)} rows: {ast.where_clause}")
-                        current_rows = [
-                            row
-                            for row in current_rows
-                            if self._evaluate_condition(ast.where_clause, row)
-                        ]
+                        filtered_rows = []
+                        for row in current_rows:
+                            # 确保row是dict类型，如果不是则转换
+                            row_dict = dict(row) if hasattr(row, '__dict__') or hasattr(row, 'data') else row
+                            if self._evaluate_condition(ast.where_clause, row_dict):
+                                filtered_rows.append(row_dict)
+                        current_rows = filtered_rows
                         # print(f"[EXECUTOR DEBUG] rows after WHERE: {len(current_rows)}")
 
                     # 步骤 3: 投影
@@ -483,7 +485,16 @@ class SQLExecutor:
             for index in unique_indexes:
                 index_keys = [record_data.get(col) for col in index.columns]
                 if all(key is not None for key in index_keys):
-                    existing = self.index_manager.lookup(index.name, index_keys)
+                    if hasattr(self.index_manager, 'lookup'):
+                        existing = self.index_manager.lookup(index.name, index_keys)
+                    else:
+                        # 简化的唯一性检查：扫描表
+                        all_records = self.table_manager.scan_table(stmt.table_name)
+                        existing = any(
+                            all(record.data.get(col) == key for col, key in zip(index.columns, index_keys))
+                            for record in all_records
+                        )
+                    
                     if existing:
                         constraint_columns = ", ".join(index.columns)
                         raise ValueError(
@@ -524,6 +535,9 @@ class SQLExecutor:
                             )
 
             # 实际插入
+            page_id, ridx = None, None
+            record_id = None
+            
             if hasattr(self.table_manager, 'insert_record_with_location'):
                 loc = self.table_manager.insert_record_with_location(stmt.table_name, record_data)
                 if not loc:
@@ -531,13 +545,9 @@ class SQLExecutor:
                 page_id, ridx = loc
                 record_id = (page_id, ridx)
             else:
-                # 获取插入前的记录数，作为新记录的ID
-                all_records = self.table_manager.scan_table(stmt.table_name)
-                record_id = len(all_records)  # 新记录的ID
-
-                # 插入记录到表中
-                self.table_manager.insert_record(stmt.table_name, record_data)
-                page_id, ridx = None, None
+                # 直接用insert_record返回(page_id, ridx)
+                page_id, ridx = self.table_manager.insert_record(stmt.table_name, record_data)
+                record_id = (page_id, ridx)
 
             # 索引维护
             if self.index_manager:
@@ -1139,14 +1149,8 @@ class SQLExecutor:
                 for record in filtered_records:
                     context = getattr(record, '_filtered_context', record.data)
                     if stmt.columns == ["*"]:
-                        # 返回所有表结构定义的字段
-                        row = {}
-                        schema = self.catalog.get_table_schema(
-                            from_name if isinstance(from_name, str) else stmt.from_table
-                        )
-                        for col in schema.columns:
-                            row[col.name] = record.data.get(col.name)
-                        result_records.append(row)
+                        # 返回所有字段的实际值
+                        result_records.append(dict(context))
                     else:
                         selected_data = {}
                         for col in stmt.columns:
@@ -1480,3 +1484,24 @@ class SQLExecutor:
 
         else:
             raise ValueError(f"不支持的条件类型: {type(condition)}")
+
+    def execute_sqls(self, sqls: str) -> list:
+        """支持多条SQL（以英文分号分隔）依次执行，返回所有结果"""
+        stmts = [s.strip() for s in sqls.split(';') if s.strip()]
+        results = []
+        for stmt in stmts:
+            # 每条语句补英文分号
+            if not stmt.endswith(';'):
+                stmt += ';'
+            try:
+                from sql.lexer import SQLLexer
+                from sql.parser import SQLParser
+                lexer = SQLLexer(stmt)
+                tokens = lexer.tokenize()
+                parser = SQLParser(tokens)
+                ast = parser.parse()
+                res = self.execute(ast)
+                results.append(res)
+            except Exception as e:
+                results.append({"success": False, "error": str(e), "message": f"SQL执行失败: {e}"})
+        return results

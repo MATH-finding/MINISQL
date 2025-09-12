@@ -175,7 +175,19 @@ python test_btree_standalone   # 运行综合测试脚本
 - 创建视图：`CREATE VIEW v AS <select>`
 - 删除视图：`DROP VIEW v`
 - 支持嵌套视图：在视图上再次创建视图，并可继续使用 WHERE/投影
+- 支持#注释（行内注释），如：
+
+```sql
+SELECT * FROM users; # 这是一个注释
+INSERT INTO t VALUES (1, 2); # 插入一行
+```
 
 ## 常见问题（Troubleshooting）
 - 使用视图定义中的字符串字面量（例如 `name = 'Alice'`）时，请确保字面量使用引号。
 - 若创建视图后查询返回空，请检查嵌套视图的 WHERE 条件是否与列名一致，以及字面量是否被正确引号包裹。
+- 仅支持英文分号;分隔SQL，支持多条SQL一次输入，中文分号；不被识别。
+- 示例：
+
+```sql
+CREATE TABLE t1 (id INTEGER); INSERT INTO t1 VALUES (1); SELECT * FROM t1;
+```

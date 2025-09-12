@@ -16,7 +16,14 @@ class SQLParser:
         self.current_token = tokens[0] if tokens else None
 
     def parse(self) -> Statement:
-        """解析SQL语句"""
+        """解析SQL语句（token流已去除#注释）"""
+        # 检查是否有中文分号
+        for t in self.tokens:
+            if t.value == '；':
+                raise SyntaxError("仅支持英文分号 ';' 作为语句结束符，检测到中文分号 '；'")
+        # # 语句必须以英文分号结尾
+        # if not self.tokens or self.tokens[-1].type != TokenType.SEMICOLON:
+        #     raise SyntaxError("SQL语句必须以英文分号 ';' 结尾")
         # DEBUG: 入口日志
         # print(f"[PARSER DEBUG] parse() entry, current_token={self.current_token}")
         if not self.current_token or self.current_token.type == TokenType.EOF:

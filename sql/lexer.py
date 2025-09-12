@@ -108,7 +108,7 @@ class TokenType(Enum):
 
     # 分隔符
     COMMA = ","
-    SEMICOLON = ";"
+    SEMICOLON = ";"  # 仅英文分号;被识别为语句结束符，中文分号；不被识别
     LEFT_PAREN = "("
     RIGHT_PAREN = ")"
 
@@ -227,6 +227,12 @@ class SQLLexer:
                 break
 
             char = self.sql[self.position]
+
+            if char == '#':
+                # 跳过注释到行尾
+                while self.position < len(self.sql) and self.sql[self.position] != '\n':
+                    self.position += 1
+                continue
 
             if char.isalpha() or char == "_":
                 self._read_identifier_or_keyword()

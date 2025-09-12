@@ -28,7 +28,7 @@ class MiniSQLTester:
             )
             print("某些测试可能失败")
         else:
-            print("✅ 成功以admin身份登录")
+            print("成功以admin身份登录")
 
     def execute_sql(self, sql_statement):
         """执行SQL语句并返回结果"""
@@ -234,7 +234,7 @@ class MiniSQLTester:
             result.get("success") and result.get("data", [{}])[0].get("COUNT") == 5
         )
         self.assert_test(
-            "COUNT(*) 测试", success, result.get("message", result.get("error", ""))
+            "COUNT(*) 测试", success, f"查询返回 {len(result.get('data', []))} 行"
         )
 
         result = self.execute_sql("SELECT COUNT(age) FROM users")
@@ -314,7 +314,7 @@ class MiniSQLTester:
             result.get("success") and result.get("data", [{}])[0].get("COUNT") == 4
         )
         self.assert_test(
-            "验证DELETE结果", success, result.get("message", result.get("error", ""))
+            "验证DELETE结果", success, f"查询返回 {len(result.get('data', []))} 行"
         )
 
     def test_index_operations(self):
@@ -578,6 +578,7 @@ class MiniSQLTester:
 
         # 插入各种类型的数据
         insert_types_sql = """
+        # 测试一下注释
         INSERT INTO data_types_test VALUES (
             123, 'Hello World', 3.14, TRUE, 'ABCDE', 9999999999, 'This is a long text'
         )

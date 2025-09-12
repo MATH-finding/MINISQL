@@ -18,8 +18,8 @@ class TableManager:
         """创建表"""
         self.catalog.create_table(table_name, columns)
 
-    def insert_record(self, table_name: str, record_data: Dict[str, Any]) -> bool:
-        """插入记录到表"""
+    def insert_record(self, table_name: str, record_data: Dict[str, Any]) -> tuple:
+        """插入记录到表，返回(page_id, slot_id)"""
         schema = self.catalog.get_table_schema(table_name)
         if not schema:
             raise ValueError(f"表 {table_name} 不存在")
@@ -45,12 +45,16 @@ class TableManager:
         record = Record(record_data)
 
         for page_id in pages:
-            if self.record_manager.insert_record(page_id, record):
-                return True
+            slot_id = self.record_manager.insert_record_with_index(page_id, record)
+            if slot_id is not None:
+                return (page_id, slot_id)
 
         # 现有页面都没有空间，分配新页面
         new_page_id = self.catalog.allocate_page_for_table(table_name)
-        return self.record_manager.insert_record(new_page_id, record)
+        slot_id = self.record_manager.insert_record_with_index(new_page_id, record)
+        if slot_id is not None:
+            return (new_page_id, slot_id)
+        raise ValueError("插入记录失败：未能分配插槽")
 
     def scan_table(self, table_name: str) -> List[Record]:
         """扫描表的所有记录"""
