@@ -631,6 +631,61 @@ class DatabaseWebAPI:
                         showMessage(resultEl, '获取表列表失败: ' + error.message, true);
                     }
                 }
+                
+                // 修复后的快速预览函数
+                async function previewTableData(tableName) {
+                    const resultEl = document.getElementById('tables-result');
+                    
+                    try {
+                        // 显示加载状态
+                        const loadingHtml = `<div class="alert alert-info">正在加载 ${tableName} 的数据预览...</div>`;
+                        resultEl.innerHTML = resultEl.innerHTML + loadingHtml;
+                        
+                        const response = await fetch(`/api/tables/${tableName}/data?page=1&page_size=10`, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                
+                        const result = await response.json();
+                
+                        if (result.success) {
+                            let html = `<div class="alert alert-success">表 ${tableName} 数据预览（前10行）</div>`;
+                            
+                            if (result.data.rows.length > 0) {
+                                html += '<div class="result-table"><table>';
+                                html += '<thead><tr>';
+                                result.data.columns.forEach(col => {
+                                    html += `<th>${col}</th>`;
+                                });
+                                html += '</tr></thead><tbody>';
+                                
+                                result.data.rows.forEach(row => {
+                                    html += '<tr>';
+                                    row.forEach(cell => {
+                                        html += `<td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cell}">${cell}</td>`;
+                                    });
+                                    html += '</tr>';
+                                });
+                                html += '</tbody></table></div>';
+                                
+                                if (result.data.total > 10) {
+                                    html += `<p><small>显示了前10行，共${result.data.total}行记录。<button class="btn" onclick="showTableInfo('${tableName}')">查看完整数据</button></small></p>`;
+                                }
+                            } else {
+                                html += '<p>该表暂无数据</p>';
+                            }
+                            
+                            // 在当前表格后面添加预览，而不是替换
+                            const currentContent = resultEl.innerHTML.replace(/<div class="alert alert-info">.*?<\/div>/, '');
+                            resultEl.innerHTML = currentContent + html;
+                        } else {
+                            showMessage(resultEl, '获取数据失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(resultEl, '获取数据失败: ' + error.message, true);
+                    }
+                }
+
 
                 // 显示表信息 - 改进版，类似Navicat
                 async function showTableInfo(tableName) {
