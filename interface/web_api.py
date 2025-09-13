@@ -322,13 +322,15 @@ class DatabaseWebAPI:
 
             <div class="sidebar" id="sidebar">
                 <h3>数据库管理</h3>
-                <ul>
-                    <li onclick="showTab('sql-tab')">SQL 查询</li>
-                    <li onclick="showTab('tables-tab')">表管理</li>
-                    <li onclick="showTab('indexes-tab')">索引管理</li>
-                    <li onclick="showTab('stats-tab')">统计信息</li>
-                    <li onclick="logout()" style="color: #e74c3c;">退出登录</li>
-                </ul>
+                    // 在侧边栏HTML中添加
+                    <ul>
+                        <li onclick="showTab('sql-tab')">SQL 查询</li>
+                        <li onclick="showTab('tables-tab')">表管理</li>
+                        <li onclick="showTab('views-tab')">视图管理</li>
+                        <li onclick="showTab('indexes-tab')">索引管理</li>
+                        <li onclick="showTab('stats-tab')">统计信息</li>
+                        <li onclick="logout()" style="color: #e74c3c;">退出登录</li>
+                    </ul>
             </div>
 
             <div class="container">
@@ -378,9 +380,11 @@ class DatabaseWebAPI:
                         <div class="tabs">
                             <div class="tab active" onclick="showTab('sql-tab')">SQL 查询</div>
                             <div class="tab" onclick="showTab('tables-tab')">表管理</div>
+                            <div class="tab" onclick="showTab('views-tab')">视图管理</div>
                             <div class="tab" onclick="showTab('indexes-tab')">索引管理</div>
                             <div class="tab" onclick="showTab('stats-tab')">统计信息</div>
                         </div>
+
 
                         <!-- SQL 查询标签页 -->
                         <div id="sql-tab" class="tab-content active">
@@ -412,6 +416,13 @@ class DatabaseWebAPI:
                             <button class="btn" onclick="loadStats()">刷新统计信息</button>
                             <div id="stats-result"></div>
                         </div>
+                        
+                        <!-- 视图管理标签页 -->
+                        <div id="views-tab" class="tab-content">
+                            <button class="btn" onclick="loadViews()">刷新视图列表</button>
+                            <div id="views-result"></div>
+                        </div>
+
                     </div>
                 </div>
             </div>
@@ -515,6 +526,7 @@ class DatabaseWebAPI:
                     const map = {
                         'sql-tab': 'SQL 查询',
                         'tables-tab': '表管理',
+                        'views-tab': '视图管理',
                         'indexes-tab': '索引管理',
                         'stats-tab': '统计信息'
                     };
@@ -993,6 +1005,245 @@ class DatabaseWebAPI:
                         showMessage(resultEl, '获取统计信息失败: ' + error.message, true);
                     }
                 }
+                
+                // 加载视图列表
+                async function loadViews() {
+                    const resultEl = document.getElementById('views-result');
+                
+                    try {
+                        const response = await fetch('/api/views', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                
+                        const result = await response.json();
+                
+                        if (result.success) {
+                            let html = `<div class="alert alert-success">${result.message}</div>`;
+                
+                            if (result.data && result.data.length > 0) {
+                                html += '<div class="result-table"><table>';
+                                html += '<thead><tr><th>视图名</th><th>操作</th></tr></thead><tbody>';
+                
+                                result.data.forEach(view => {
+                                    html += `<tr>
+                                        <td>${view}</td>
+                                        <td>
+                                            <button class="btn" onclick="showViewInfo('${view}')" style="margin-right: 5px;">查看详情</button>
+                                            <button class="btn btn-secondary" onclick="previewViewData('${view}')">快速预览</button>
+                                        </td>
+                                    </tr>`;
+                                });
+                
+                                html += '</tbody></table></div>';
+                            } else {
+                                html += '<p>暂无视图</p>';
+                            }
+                
+                            resultEl.innerHTML = html;
+                        } else {
+                            showMessage(resultEl, result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(resultEl, '获取视图列表失败: ' + error.message, true);
+                    }
+                }
+                
+                // 显示视图详情
+                async function showViewInfo(viewName) {
+                    try {
+                        // 获取视图信息
+                        const infoResponse = await fetch(`/api/views/${viewName}`, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const infoResult = await infoResponse.json();
+                
+                        // 获取视图数据
+                        const dataResponse = await fetch(`/api/views/${viewName}/data?page=1&page_size=50`, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const dataResult = await dataResponse.json();
+                
+                        if (infoResult.success && dataResult.success) {
+                            showViewDetailDialog(viewName, infoResult.data, dataResult.data);
+                        } else {
+                            alert('获取视图信息失败: ' + (infoResult.message || dataResult.message));
+                        }
+                    } catch (error) {
+                        alert('获取视图信息失败: ' + error.message);
+                    }
+                }
+                
+                // 显示视图详情对话框
+                function showViewDetailDialog(viewName, viewInfo, dataInfo) {
+                    const modal = document.createElement('div');
+                    modal.style.cssText = `
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                        background: rgba(0,0,0,0.5); z-index: 2000;
+                        display: flex; align-items: center; justify-content: center;
+                    `;
+                
+                    const dialog = document.createElement('div');
+                    dialog.style.cssText = `
+                        background: white; border-radius: 12px; 
+                        width: 90%; max-width: 1000px; height: 80%; 
+                        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                        display: flex; flex-direction: column;
+                    `;
+                
+                    let html = `
+                        <div style="padding: 20px; border-bottom: 1px solid #e1e5e9;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <h2>视图: ${viewName}</h2>
+                                <button onclick="this.closest('.modal').remove()" 
+                                        style="background: #dc3545; color: white; border: none; 
+                                               padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                                    关闭
+                                </button>
+                            </div>
+                        </div>
+                
+                        <div style="padding: 0 20px;">
+                            <div class="view-detail-tabs" style="display: flex; border-bottom: 2px solid #e1e5e9;">
+                                <div class="view-detail-tab active" onclick="showViewDetailTab(event, 'definition')" 
+                                     style="padding: 12px 20px; cursor: pointer; border-bottom: 2px solid #667eea;">
+                                    视图定义
+                                </div>
+                                <div class="view-detail-tab" onclick="showViewDetailTab(event, 'data')" 
+                                     style="padding: 12px 20px; cursor: pointer; border-bottom: 2px solid transparent;">
+                                    数据内容 (${dataInfo.total}行)
+                                </div>
+                            </div>
+                        </div>
+                
+                        <!-- 视图定义标签页 -->
+                        <div id="definition-content" class="view-detail-content" style="flex: 1; overflow-y: auto; padding: 20px;">
+                            <h4>SQL 定义：</h4>
+                            <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; border: 1px solid #e9ecef; margin-top: 10px;">
+                                <pre style="margin: 0; font-family: 'Courier New', monospace; font-size: 14px; white-space: pre-wrap;">${viewInfo.definition}</pre>
+                            </div>
+                        </div>
+                
+                        <!-- 数据内容标签页 -->
+                        <div id="data-content" class="view-detail-content" style="flex: 1; overflow-y: auto; padding: 20px; display: none;">
+                            <div style="margin-bottom: 15px;">
+                                <span style="color: #666;">共 ${dataInfo.total} 行记录</span>
+                                ${dataInfo.total_pages > 1 ? `
+                                <span style="margin-left: 20px;">
+                                    第 ${dataInfo.page} 页，共 ${dataInfo.total_pages} 页
+                                </span>` : ''}
+                            </div>`;
+                
+                    if (dataInfo.rows && dataInfo.rows.length > 0) {
+                        html += `
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; min-width: 600px;">
+                                    <thead>
+                                        <tr style="background: #f8f9fa;">`;
+                        
+                        dataInfo.columns.forEach(col => {
+                            html += `<th style="padding: 12px; text-align: left; border: 1px solid #dee2e6; font-weight: 600; white-space: nowrap;">${col}</th>`;
+                        });
+                
+                        html += `</tr></thead><tbody>`;
+                
+                        dataInfo.rows.forEach(row => {
+                            html += '<tr>';
+                            row.forEach(cell => {
+                                html += `<td style="padding: 12px; border: 1px solid #dee2e6; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cell}">${cell}</td>`;
+                            });
+                            html += '</tr>';
+                        });
+                
+                        html += '</tbody></table></div>';
+                    } else {
+                        html += '<p style="color: #666; text-align: center; padding: 20px;">暂无数据</p>';
+                    }
+                
+                    html += '</div>';
+                
+                    dialog.innerHTML = html;
+                    modal.appendChild(dialog);
+                    modal.className = 'modal';
+                    document.body.appendChild(modal);
+                
+                    modal.addEventListener('click', (e) => {
+                        if (e.target === modal) {
+                            modal.remove();
+                        }
+                    });
+                }
+                
+                // 视图详情标签页切换
+                function showViewDetailTab(event, tabName) {
+                    document.querySelectorAll('.view-detail-tab').forEach(tab => {
+                        tab.classList.remove('active');
+                        tab.style.borderBottomColor = 'transparent';
+                    });
+                    
+                    document.querySelectorAll('.view-detail-content').forEach(content => {
+                        content.style.display = 'none';
+                    });
+                
+                    event.target.classList.add('active');
+                    event.target.style.borderBottomColor = '#667eea';
+                    document.getElementById(tabName + '-content').style.display = 'block';
+                }
+                
+                // 快速预览视图数据
+                async function previewViewData(viewName) {
+                    const resultEl = document.getElementById('views-result');
+                    
+                    try {
+                        const loadingHtml = `<div class="alert alert-info">正在加载视图 ${viewName} 的数据预览...</div>`;
+                        resultEl.innerHTML = resultEl.innerHTML + loadingHtml;
+                        
+                        const response = await fetch(`/api/views/${viewName}/data?page=1&page_size=10`, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                
+                        const result = await response.json();
+                
+                        if (result.success) {
+                            let html = `<div class="alert alert-success">视图 ${viewName} 数据预览（前10行）</div>`;
+                            
+                            if (result.data.rows.length > 0) {
+                                html += '<div class="result-table"><table>';
+                                html += '<thead><tr>';
+                                result.data.columns.forEach(col => {
+                                    html += `<th>${col}</th>`;
+                                });
+                                html += '</tr></thead><tbody>';
+                                
+                                result.data.rows.forEach(row => {
+                                    html += '<tr>';
+                                    row.forEach(cell => {
+                                        html += `<td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cell}">${cell}</td>`;
+                                    });
+                                    html += '</tr>';
+                                });
+                                html += '</tbody></table></div>';
+                                
+                                if (result.data.total > 10) {
+                                    html += `<p><small>显示了前10行，共${result.data.total}行记录。<button class="btn" onclick="showViewInfo('${viewName}')">查看完整数据</button></small></p>`;
+                                }
+                            } else {
+                                html += '<p>该视图暂无数据</p>';
+                            }
+                            
+                            const currentContent = resultEl.innerHTML.replace(/<div class="alert alert-info">.*?<\/div>/, '');
+                            resultEl.innerHTML = currentContent + html;
+                        } else {
+                            showMessage(resultEl, '获取数据失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(resultEl, '获取数据失败: ' + error.message, true);
+                    }
+                }
+
 
                 // 页面加载时的事件处理
                 document.addEventListener('DOMContentLoaded', function() {
@@ -1248,6 +1499,126 @@ class DatabaseWebAPI:
                 return jsonify({
                     'success': False,
                     'message': f'获取表列表失败: {str(e)}'
+                }), 500
+
+        @self.app.route('/api/views', methods=['GET'])
+        def list_views():
+            """获取视图列表"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                views = db.list_views()
+
+                return jsonify({
+                    'success': True,
+                    'data': views,
+                    'message': f'共{len(views)}个视图'
+                })
+            except Exception as e:
+                logger.error(f"获取视图列表错误: {e}")
+                return jsonify({
+                    'success': False,
+                    'message': f'获取视图列表失败: {str(e)}'
+                }), 500
+
+        @self.app.route('/api/views/<view_name>', methods=['GET'])
+        def get_view_info(view_name: str):
+            """获取视图信息"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                info = db.get_view_info(view_name)
+
+                if 'error' in info:
+                    return jsonify({
+                        'success': False,
+                        'message': info['error']
+                    }), 404
+
+                return jsonify({
+                    'success': True,
+                    'data': info
+                })
+            except Exception as e:
+                logger.error(f"获取视图信息错误: {e}")
+                return jsonify({
+                    'success': False,
+                    'message': f'获取视图信息失败: {str(e)}'
+                }), 500
+
+        @self.app.route('/api/views/<view_name>/data', methods=['GET'])
+        def get_view_data(view_name: str):
+            """获取视图数据"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                # 获取分页参数
+                page = request.args.get('page', 1, type=int)
+                page_size = request.args.get('page_size', 100, type=int)
+
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.get_view_data(view_name, page, page_size)
+
+                if not result.get('success'):
+                    return jsonify(result), 404
+
+                # 转换为前端需要的格式
+                data = result['data']
+                if data['rows']:
+                    columns = list(data['rows'][0].keys())
+                    rows = []
+                    for row in data['rows']:
+                        formatted_row = []
+                        for col in columns:
+                            value = row.get(col)
+                            if value is None:
+                                formatted_row.append('')
+                            elif isinstance(value, bool):
+                                formatted_row.append('是' if value else '否')
+                            else:
+                                formatted_row.append(str(value))
+                        rows.append(formatted_row)
+
+                    return jsonify({
+                        'success': True,
+                        'data': {
+                            'columns': columns,
+                            'rows': rows,
+                            'total': data['total'],
+                            'page': data['page'],
+                            'page_size': data['page_size'],
+                            'total_pages': data['total_pages']
+                        }
+                    })
+                else:
+                    return jsonify({
+                        'success': True,
+                        'data': {
+                            'columns': [],
+                            'rows': [],
+                            'total': 0,
+                            'page': 1,
+                            'page_size': page_size,
+                            'total_pages': 0
+                        }
+                    })
+
+            except Exception as e:
+                logger.error(f"获取视图数据错误: {e}")
+                return jsonify({
+                    'success': False,
+                    'message': f'获取视图数据失败: {str(e)}'
                 }), 500
 
         @self.app.route('/api/tables/<table_name>', methods=['GET'])
