@@ -26,9 +26,9 @@ class DatabaseWebAPI:
         # 启用 CORS 支持前端跨域访问
         CORS(self.app, supports_credentials=True)
 
-        # 数据库连接池（简化版：每个会话一个连接）
-        self.db_connections: Dict[str, SimpleDatabase] = {}
-        self.default_db_file = db_file
+        # 保存文件路径并创建单一数据库连接
+        self.default_db_file = db_file  # 添加这行
+        self.db = SimpleDatabase(self.default_db_file)
 
         self._setup_routes()
 
@@ -41,14 +41,8 @@ class DatabaseWebAPI:
         return session['session_id']
 
     def _get_db(self, session_id: Optional[str] = None) -> SimpleDatabase:
-        """获取数据库连接"""
-        if session_id is None:
-            session_id = self._get_session_id()
-
-        if session_id not in self.db_connections:
-            self.db_connections[session_id] = SimpleDatabase(self.default_db_file)
-
-        return self.db_connections[session_id]
+        """获取数据库连接 - 改为单一连接"""
+        return self.db
 
     def _require_auth(self):
         """检查用户是否已认证"""
@@ -322,7 +316,6 @@ class DatabaseWebAPI:
 
             <div class="sidebar" id="sidebar">
                 <h3>数据库管理</h3>
-                    // 在侧边栏HTML中添加
                     <ul>
                         <li onclick="showTab('sql-tab')">SQL 查询</li>
                         <li onclick="showTab('tables-tab')">表管理</li>
@@ -1271,7 +1264,6 @@ class DatabaseWebAPI:
             return jsonify({
                 'status': 'ok',
                 'message': 'Database Web API is running',
-                'connections': len(self.db_connections)
             })
 
         @self.app.route('/api/tables/<table_name>/data', methods=['GET'])
@@ -1394,18 +1386,9 @@ class DatabaseWebAPI:
         def logout():
             """用户登出"""
             try:
-                session_id = session.get('session_id')
                 username = session.get('username')
 
-                if session_id and session_id in self.db_connections:
-                    try:
-                        self.db_connections[session_id].logout()
-                        self.db_connections[session_id].close()
-                    except Exception as e:
-                        logger.warning(f"关闭数据库连接时出错: {e}")
-                    finally:
-                        del self.db_connections[session_id]
-
+                # 只清理会话信息，不关闭数据库连接
                 session.clear()
 
                 return jsonify({
@@ -1773,13 +1756,11 @@ class DatabaseWebAPI:
     def close_all_connections(self):
         """关闭所有数据库连接"""
         print("关闭数据库连接...")
-        for session_id, db in list(self.db_connections.items()):
-            try:
-                db.close()
-            except Exception as e:
-                logger.warning(f"关闭连接 {session_id} 时出错: {e}")
-        self.db_connections.clear()
-        print("所有连接已关闭")
+        try:
+            self.db.close()
+        except Exception as e:
+            logger.warning(f"关闭连接时出错: {e}")
+        print("数据库连接已关闭")
 
 
 def create_web_app(db_file: str = "web.db") -> Flask:

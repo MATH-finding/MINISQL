@@ -66,11 +66,18 @@ class SystemCatalog:
 
     def authenticate_user(self, username: str, password: str) -> bool:
         """用户认证"""
+        print(f"[DEBUG] 当前所有用户: {list(self.users.keys())}")
+
         if username not in self.users:
+            print(f"[DEBUG] 用户 {username} 不存在")
             return False
 
+        print(f"[DEBUG] 当前用户: {username}")
+
         password_hash = hashlib.sha256(password.encode()).hexdigest()
-        return self.users[username]["password_hash"] == password_hash
+        stored_info = self.users[username]
+
+        return stored_info["password_hash"] == password_hash
 
     def grant_privilege(self, username: str, table_name: str, privilege: str) -> bool:
         """授予权限"""
@@ -168,6 +175,9 @@ class SystemCatalog:
         finally:
             self.buffer_manager.unpin_page(self.catalog_page_id, True)
 
+        # 添加强制刷新到磁盘
+        self.buffer_manager.flush_all()
+
     def _load_catalog(self):
         """从磁盘加载系统目录"""
         try:
@@ -193,26 +203,6 @@ class SystemCatalog:
             finally:
                 self.buffer_manager.unpin_page(self.catalog_page_id, False)
         except:
-            self._create_empty_catalog()
-
-    def _load_catalog(self):
-        """从磁盘加载系统目录"""
-        try:
-            page = self.buffer_manager.get_page(self.catalog_page_id)
-            try:
-                # 读取目录数据长度
-                data_length = page.read_int(0)
-                if data_length > 0:
-                    # 读取序列化的目录数据
-                    catalog_bytes = page.read_bytes(4, data_length)
-                    catalog_data = pickle.loads(catalog_bytes)
-
-                    self.tables = catalog_data.get("tables", {})
-                    self.table_pages = catalog_data.get("table_pages", {})
-            finally:
-                self.buffer_manager.unpin_page(self.catalog_page_id, False)
-        except:
-            # 目录页面不存在，创建新的
             self._create_empty_catalog()
 
     def _create_empty_catalog(self):
@@ -241,21 +231,6 @@ class SystemCatalog:
         print(f"表 {table_name} 的元数据删除成功")
         return True
 
-    def _save_catalog(self):
-        """保存系统目录到磁盘"""
-        catalog_data = {"tables": self.tables, "table_pages": self.table_pages}
-        catalog_bytes = pickle.dumps(catalog_data)
-
-        page = self.buffer_manager.get_page(self.catalog_page_id)
-        try:
-            # 检查页面是否够大
-            if len(catalog_bytes) + 4 > page.PAGE_SIZE:
-                raise RuntimeError("系统目录太大，无法存储在单个页面中")
-
-            page.write_int(0, len(catalog_bytes))
-            page.write_bytes(4, catalog_bytes)
-        finally:
-            self.buffer_manager.unpin_page(self.catalog_page_id, True)
 
     def create_table(self, table_name: str, columns: List[ColumnDefinition]):
         """创建表"""
