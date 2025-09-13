@@ -23,7 +23,7 @@ from sql import (
     SemanticError,
     DiagnosticEngine
 )
-from typing import Optional
+from typing import Optional,List
 
 
 
@@ -476,6 +476,26 @@ class SimpleDatabase:
         """刷新所有缓存到磁盘"""
         self.buffer_manager.flush_all()
 
+    def list_all_indexes(self) -> Dict[str, Dict[str, Any]]:
+        """列出所有索引，按表分组"""
+        if not hasattr(self, 'index_manager') or not self.index_manager:
+            return {}
+
+        all_indexes = {}
+        for table_name in self.catalog.list_tables():
+            table_indexes = self.index_manager.get_table_indexes(table_name)
+            if table_indexes:
+                all_indexes[table_name] = {}
+                for index_name in table_indexes:
+                    index_info = self.index_manager.indexes.get(index_name)
+                    if index_info:
+                        all_indexes[table_name][index_name] = {
+                            'column': index_info.column_name,
+                            'unique': index_info.is_unique
+                        }
+
+        return all_indexes
+
     def close(self):
         """关闭数据库连接"""
         try:
@@ -486,3 +506,54 @@ class SimpleDatabase:
             print(f"数据库 {self.db_file} 已关闭")
         except Exception as e:
             print(f"关闭数据库时发生错误: {e}")
+
+
+    def list_views(self) -> List[str]:
+        """列出所有视图"""
+        return list(self.catalog.views.keys())
+
+
+    def get_view_info(self, view_name: str) -> Dict[str, Any]:
+        """获取视图信息"""
+        if view_name not in self.catalog.views:
+            return {"error": f"视图 {view_name} 不存在"}
+
+        return {
+            "view_name": view_name,
+            "definition": self.catalog.views[view_name],
+            "is_view": True
+        }
+
+
+    def get_view_data(self, view_name: str, page: int = 1, page_size: int = 100) -> Dict[str, Any]:
+        """获取视图数据（执行视图定义的SQL）"""
+        if view_name not in self.catalog.views:
+            return {"success": False, "message": f"视图 {view_name} 不存在"}
+
+        try:
+            # 执行视图定义的SQL
+            view_sql = self.catalog.views[view_name]
+            result = self.execute_sql(view_sql)
+
+            if not result.get("success"):
+                return result
+
+            # 分页处理
+            data = result.get("data", [])
+            total_count = len(data)
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paged_data = data[start_idx:end_idx]
+
+            return {
+                "success": True,
+                "data": {
+                    "rows": paged_data,
+                    "total": total_count,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": (total_count + page_size - 1) // page_size
+                }
+            }
+        except Exception as e:
+            return {"success": False, "message": f"执行视图查询失败: {str(e)}"}
