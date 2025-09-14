@@ -194,3 +194,21 @@ INSERT INTO t VALUES (1, 2); # 插入一行
 ```sql
 CREATE TABLE t1 (id INTEGER); INSERT INTO t1 VALUES (1); SELECT * FROM t1;
 ```
+
+## 游标功能
+
+支持大结果集分批获取，适合分页/流式处理。
+
+### Shell用法
+```
+\\cursor open SELECT * FROM users;
+\\cursor fetch <id> [n]   # 每次取n行，默认10行
+\\cursor close <id>
+```
+
+### Web API
+- `POST /api/cursors/open`  {"sql": "SELECT ..."}  → {"cursor_id": id}
+- `POST /api/cursors/fetch` {"cursor_id": id, "n": 10} → {"rows": [...], "done": bool}
+- `POST /api/cursors/close` {"cursor_id": id}
+
+目前仅支持SELECT游标，后续可扩展。

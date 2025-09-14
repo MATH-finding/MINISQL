@@ -356,6 +356,40 @@ class SQLShell:
                 print("用法: \\session [list|new|use <id>]")
                 return
 
+        # 游标命令
+        if command.startswith("\\cursor"):
+            parts = command.split()
+            if len(parts) >= 3 and parts[1] == "open":
+                sql = command.partition("open")[2].strip()
+                try:
+                    cursor_id = self.database.sql_executor.open_cursor(sql)
+                    print(f"[游标] 已打开，ID={cursor_id}")
+                except Exception as e:
+                    print(f"[游标] 打开失败: {e}")
+                return
+            elif len(parts) >= 3 and parts[1] == "fetch":
+                try:
+                    cursor_id = int(parts[2])
+                    n = int(parts[3]) if len(parts) > 3 else 10
+                    res = self.database.sql_executor.fetch_cursor(cursor_id, n)
+                    print(f"[游标] ID={cursor_id}，返回{len(res['rows'])}行，{'已结束' if res['done'] else '未结束'}")
+                    for row in res['rows']:
+                        print(row)
+                except Exception as e:
+                    print(f"[游标] fetch失败: {e}")
+                return
+            elif len(parts) >= 3 and parts[1] == "close":
+                try:
+                    cursor_id = int(parts[2])
+                    ok = self.database.sql_executor.close_cursor(cursor_id)
+                    print(f"[游标] ID={cursor_id} 已关闭" if ok else f"[游标] ID={cursor_id} 不存在")
+                except Exception as e:
+                    print(f"[游标] close失败: {e}")
+                return
+            else:
+                print("用法: \\cursor open <SQL> | \\cursor fetch <id> [n] | \\cursor close <id>")
+                return
+
         # 系统控制命令
         if command.lower() in ("quit", "exit"):
             print("正在保存数据...")

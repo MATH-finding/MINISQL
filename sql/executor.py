@@ -125,6 +125,8 @@ class SQLExecutor:
     """SQL执行器，将AST转换为数据库操作（注释已在词法分析阶段去除）"""
 
     _next_session_id = 1
+    _next_cursor_id = 1
+    _cursors = {}
 
     def __init__(
         self, table_manager: TableManager, catalog: SystemCatalog, index_manager=None
@@ -1797,3 +1799,39 @@ class SQLExecutor:
             return {"type": "ALTER_TABLE", "success": True, "message": f"表 {stmt.table_name} 删除列 {stmt.column_name} 成功"}
         else:
             return {"type": "ALTER_TABLE", "success": False, "message": f"不支持的ALTER操作: {stmt.action}"}
+
+    def open_cursor(self, sql: str):
+        """打开游标，返回游标ID。只支持SELECT"""
+        from sql.lexer import SQLLexer
+        from sql.parser import SQLParser
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        ast = parser.parse()
+        if not hasattr(ast, 'columns'):
+            raise ValueError("仅支持SELECT语句游标")
+        result = self._execute_select(ast)
+        rows = result.get('data', [])
+        cursor_id = SQLExecutor._next_cursor_id
+        SQLExecutor._next_cursor_id += 1
+        SQLExecutor._cursors[cursor_id] = {'rows': rows, 'pos': 0}
+        return cursor_id
+
+    def fetch_cursor(self, cursor_id: int, n: int = 10):
+        """从游标中取n行，返回数据和是否结束。"""
+        cursor = SQLExecutor._cursors.get(cursor_id)
+        if not cursor:
+            raise ValueError(f"无效的游标ID: {cursor_id}")
+        rows = cursor['rows']
+        pos = cursor['pos']
+        batch = rows[pos:pos+n]
+        cursor['pos'] += len(batch)
+        done = cursor['pos'] >= len(rows)
+        return {'rows': batch, 'done': done}
+
+    def close_cursor(self, cursor_id: int):
+        """关闭游标，释放资源。"""
+        if cursor_id in SQLExecutor._cursors:
+            del SQLExecutor._cursors[cursor_id]
+            return True
+        return False

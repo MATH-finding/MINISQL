@@ -2202,6 +2202,34 @@ class DatabaseWebAPI:
                     'message': '获取触发器信息失败'
                 }), 500
 
+        @self.app.route('/api/cursors/open', methods=['POST'])
+        def open_cursor():
+            sql = request.json.get('sql')
+            try:
+                cursor_id = self.executor.open_cursor(sql)
+                return jsonify({'success': True, 'cursor_id': cursor_id})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)})
+
+        @self.app.route('/api/cursors/fetch', methods=['POST'])
+        def fetch_cursor():
+            cursor_id = request.json.get('cursor_id')
+            n = request.json.get('n', 10)
+            try:
+                res = self.executor.fetch_cursor(int(cursor_id), int(n))
+                return jsonify({'success': True, 'rows': res['rows'], 'done': res['done']})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)})
+
+        @self.app.route('/api/cursors/close', methods=['POST'])
+        def close_cursor():
+            cursor_id = request.json.get('cursor_id')
+            try:
+                ok = self.executor.close_cursor(int(cursor_id))
+                return jsonify({'success': ok})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)})
+
     def _format_select_for_web(self, data: list) -> dict:
         """将SELECT结果格式化为适合前端展示的格式"""
         if not data:
