@@ -40,7 +40,7 @@ if HAS_PT:
                 "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "CREATE", "TABLE",
                 "UPDATE", "DELETE", "DROP", "TRUNCATE", "JOIN", "INNER", "LEFT", "RIGHT",
                 "ON", "GROUP", "BY", "ORDER", "ASC", "DESC", "INDEX", "UNIQUE", "VIEW", "AS",
-                "COUNT", "SUM", "AVG", "MIN", "MAX",
+                "COUNT", "SUM", "AVG", "MIN", "MAX", "TRIGGER", "BEFORE", "AFTER", "FOR", "EACH", "ROW",
             ]
 
         def get_completions(self, document: 'Document', complete_event):
@@ -94,8 +94,8 @@ if HAS_PT:
         def __init__(self, database: SimpleDatabase):
             self.db = database
             self.seed_words = [
-                "help", "tables", "views", "stats", "indexes", "describe ", "show ",
-                "CREATE TABLE ", "SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM ",
+                "help", "tables", "views", "triggers", "stats", "indexes", "describe ", "show ",
+                "CREATE TABLE ", "CREATE TRIGGER ", "SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM ",
             ]
 
         def get_suggestion(self, buffer, document: 'Document'):
@@ -357,6 +357,29 @@ class SQLShell:
             self._show_transaction_status()
             return
 
+        # 触发器管理命令
+        if command.lower() in ("triggers", "show triggers"):
+            self._show_triggers()
+            return
+
+        if command.lower().startswith("describe trigger "):
+            trigger_name = command.split()[2]
+            self._describe_trigger(trigger_name)
+            return
+
+        if command.lower().startswith("show trigger "):
+            parts = command.split()
+            if len(parts) >= 3:
+                alias = f"describe trigger {parts[2]}"
+                self._process_command(alias)
+                return
+
+        if command.lower().startswith("drop trigger "):
+            trigger_name = command.split()[2]
+            result = self.database.execute_sql(f"DROP TRIGGER {trigger_name};")
+            format_query_result(result)
+            return
+
         # 会话管理命令
         if command.startswith("\\session"):
             parts = command.split()
@@ -383,6 +406,40 @@ class SQLShell:
                 return
             else:
                 print("用法: \\session [list|new|use <id>|info]")
+                return
+
+        # 游标命令
+        if command.startswith("\\cursor"):
+            parts = command.split()
+            if len(parts) >= 3 and parts[1] == "open":
+                sql = command.partition("open")[2].strip()
+                try:
+                    cursor_id = self.database.sql_executor.open_cursor(sql)
+                    print(f"[游标] 已打开，ID={cursor_id}")
+                except Exception as e:
+                    print(f"[游标] 打开失败: {e}")
+                return
+            elif len(parts) >= 3 and parts[1] == "fetch":
+                try:
+                    cursor_id = int(parts[2])
+                    n = int(parts[3]) if len(parts) > 3 else 10
+                    res = self.database.sql_executor.fetch_cursor(cursor_id, n)
+                    print(f"[游标] ID={cursor_id}，返回{len(res['rows'])}行，{'已结束' if res['done'] else '未结束'}")
+                    for row in res['rows']:
+                        print(row)
+                except Exception as e:
+                    print(f"[游标] fetch失败: {e}")
+                return
+            elif len(parts) >= 3 and parts[1] == "close":
+                try:
+                    cursor_id = int(parts[2])
+                    ok = self.database.sql_executor.close_cursor(cursor_id)
+                    print(f"[游标] ID={cursor_id} 已关闭" if ok else f"[游标] ID={cursor_id} 不存在")
+                except Exception as e:
+                    print(f"[游标] close失败: {e}")
+                return
+            else:
+                print("用法: \\cursor open <SQL> | \\cursor fetch <id> [n] | \\cursor close <id>")
                 return
 
         # 系统控制命令
@@ -573,6 +630,8 @@ class SQLShell:
             """
             📋 SQL语句:
             CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+            ALTER TABLE table_name ADD COLUMN col type           - 添加列
+            ALTER TABLE table_name DROP COLUMN col               - 删除列
             INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
             SELECT columns FROM table_name [WHERE condition]     - 查询数据
             [JOIN ... ON ...]、聚合 COUNT/SUM/AVG/MIN/MAX        - 进阶查询
@@ -812,7 +871,7 @@ class SQLShell:
     # 新增：演示 - 事务管理
     def _demo_transactions(self):
         print("\n=== DEMO: 事务管理 ===")
-        
+
         # 清理可能存在的表
         cleanup_sqls = [
             "DROP TABLE demo_accounts",
@@ -823,7 +882,7 @@ class SQLShell:
                 self.database.execute_sql(sql)
             except Exception:
                 pass
-        
+
         # 创建演示表
         create_sqls = [
             "CREATE TABLE demo_accounts (id INTEGER PRIMARY KEY, name VARCHAR(50), balance REAL)",
@@ -831,31 +890,31 @@ class SQLShell:
             "INSERT INTO demo_accounts VALUES (1, 'Alice', 1000.0)",
             "INSERT INTO demo_accounts VALUES (2, 'Bob', 500.0)"
         ]
-        
+
         print("1. 创建演示表和初始数据:")
         for sql in create_sqls:
             result = self.database.execute_sql(sql)
             print(f"SQL> {sql}")
             format_query_result(result)
-        
+
         print("\n2. 查看初始账户余额:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts")
         print("SQL> SELECT * FROM demo_accounts")
         format_query_result(result)
-        
+
         print("\n3. 演示事务 - 转账操作:")
         print("   Alice 向 Bob 转账 200 元")
-        
+
         # 开始事务
         print("\n3.1 开始事务:")
         result = self.database.execute_sql("BEGIN")
         print("SQL> BEGIN")
         format_query_result(result)
-        
+
         # 显示事务状态
         print("\n3.2 查看事务状态:")
         self._show_transaction_status()
-        
+
         # 执行转账操作
         transfer_sqls = [
             "UPDATE demo_accounts SET balance = balance - 200 WHERE id = 1",
@@ -863,32 +922,32 @@ class SQLShell:
             "INSERT INTO demo_transactions VALUES (1, 1, -200.0, 'TRANSFER_OUT')",
             "INSERT INTO demo_transactions VALUES (2, 2, 200.0, 'TRANSFER_IN')"
         ]
-        
+
         print("\n3.3 执行转账操作:")
         for sql in transfer_sqls:
             result = self.database.execute_sql(sql)
             print(f"SQL> {sql}")
             format_query_result(result)
-        
+
         print("\n3.4 查看事务中的余额:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts")
         print("SQL> SELECT * FROM demo_accounts")
         format_query_result(result)
-        
+
         # 提交事务
         print("\n3.5 提交事务:")
         result = self.database.execute_sql("COMMIT")
         print("SQL> COMMIT")
         format_query_result(result)
-        
+
         print("\n3.6 查看提交后的余额:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts")
         print("SQL> SELECT * FROM demo_accounts")
         format_query_result(result)
-        
+
         print("\n4. 演示回滚操作:")
         print("   Bob 向 Alice 转账 100 元，但最后回滚")
-        
+
         # 重置余额用于演示回滚
         reset_sqls = [
             "UPDATE demo_accounts SET balance = 800.0 WHERE id = 1",
@@ -896,18 +955,18 @@ class SQLShell:
         ]
         for sql in reset_sqls:
             self.database.execute_sql(sql)
-        
+
         print("\n4.1 重置余额用于演示:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts")
         print("SQL> SELECT * FROM demo_accounts")
         format_query_result(result)
-        
+
         # 开始事务
         print("\n4.2 开始事务:")
         result = self.database.execute_sql("BEGIN")
         print("SQL> BEGIN")
         format_query_result(result)
-        
+
         # 执行转账操作
         print("\n4.3 执行转账操作:")
         rollback_sqls = [
@@ -918,87 +977,87 @@ class SQLShell:
             result = self.database.execute_sql(sql)
             print(f"SQL> {sql}")
             format_query_result(result)
-        
+
         print("\n4.4 查看事务中的余额:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts")
         print("SQL> SELECT * FROM demo_accounts")
         format_query_result(result)
-        
+
         # 回滚事务
         print("\n4.5 回滚事务:")
         result = self.database.execute_sql("ROLLBACK")
         print("SQL> ROLLBACK")
         format_query_result(result)
-        
+
         print("\n4.6 查看回滚后的余额:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts")
         print("SQL> SELECT * FROM demo_accounts")
         format_query_result(result)
-        
+
         print("\n5. 演示自动提交模式:")
-        
+
         # 显示当前自动提交状态
         print("\n5.1 查看当前自动提交状态:")
         current_session = self.database.sql_executor
         autocommit = current_session.txn.autocommit()
         print(f"当前自动提交: {'开启' if autocommit else '关闭'}")
-        
+
         # 关闭自动提交
         print("\n5.2 关闭自动提交:")
         result = self.database.execute_sql("SET AUTOCOMMIT = 0")
         print("SQL> SET AUTOCOMMIT = 0")
         format_query_result(result)
-        
+
         # 显示自动提交状态
         print("\n5.3 查看自动提交状态:")
         result = self.database.execute_sql("SHOW AUTOCOMMIT")
         print("SQL> SHOW AUTOCOMMIT")
         print("autocommit = 0")
-        
+
         # 执行一些操作但不提交
         print("\n5.4 执行操作但不提交:")
         result = self.database.execute_sql("UPDATE demo_accounts SET name = 'Alice_Updated' WHERE id = 1")
         print("SQL> UPDATE demo_accounts SET name = 'Alice_Updated' WHERE id = 1")
         format_query_result(result)
-        
+
         print("\n5.5 查看未提交的更改:")
         result = self.database.execute_sql("SELECT * FROM demo_accounts WHERE id = 1")
         print("SQL> SELECT * FROM demo_accounts WHERE id = 1")
         format_query_result(result)
-        
+
         # 提交更改
         print("\n5.6 提交更改:")
         result = self.database.execute_sql("COMMIT")
         print("SQL> COMMIT")
         format_query_result(result)
-        
+
         # 恢复自动提交
         print("\n5.7 恢复自动提交:")
         result = self.database.execute_sql("SET AUTOCOMMIT = 1")
         print("SQL> SET AUTOCOMMIT = 1")
         format_query_result(result)
-        
+
         print("\n6. 演示会话管理:")
-        
+
         # 显示当前会话
         print("\n6.1 查看当前会话:")
         self._show_current_session_info()
-        
+
         # 创建新会话
         print("\n6.2 创建新会话:")
         new_session_id = self.database.new_session()
         print(f"新建会话: {new_session_id}")
-        
+
         # 列出所有会话
         print("\n6.3 列出所有会话:")
         self._show_sessions()
-        
+
         # 切换会话
         print("\n6.4 切换回原会话:")
         if self.database.use_session(0):
             print("切换到会话: 0")
             self._show_current_session_info()
-        
+
         # 清理演示数据
         print("\n7. 清理演示数据:")
         cleanup_sqls = [
@@ -1009,7 +1068,7 @@ class SQLShell:
             result = self.database.execute_sql(sql)
             print(f"SQL> {sql}")
             format_query_result(result)
-        
+
         print("\n=== 事务管理演示完成 ===")
 
     def _set_log_level(self, level: str):
@@ -1071,7 +1130,7 @@ class SQLShell:
         current_session = self.database.sql_executor
         sessions = self.database.list_sessions()
         current_s = next((s for s in sessions if s["current"]), None)
-        
+
         if current_s:
             print("🔍 当前会话详细信息:")
             print(f"  会话ID: {current_s['session_id']}")
@@ -1095,7 +1154,7 @@ class SQLShell:
             txn_id = current_session.txn.current_txn_id()
             print(f"  事务ID: {txn_id}")
         print(f"  隔离级别: {current_session.txn.isolation_level()}")
-        
+
         # 显示会话信息
         sessions = self.database.list_sessions()
         current_s = next((s for s in sessions if s["current"]), None)
@@ -1166,6 +1225,10 @@ CREATE INDEX index_name ON table_name (column)       - 创建索引
 CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
 DROP INDEX index_name                                - 删除索引
 
+⚡ 触发器操作:
+CREATE TRIGGER name BEFORE|AFTER INSERT|UPDATE|DELETE ON table FOR EACH ROW statement - 创建触发器
+DROP TRIGGER trigger_name [IF EXISTS]                                                 - 删除触发器
+
 📊 系统命令:
 tables                     - 列出所有表
 describe <table>           - 查看表结构 (可简写为 desc)
@@ -1175,6 +1238,9 @@ stats                      - 显示数据库统计信息
 views | show views         - 列出所有视图
 describe view <name>       - 查看视图定义
 show view <name>           - 别名，与上等价
+triggers | show triggers   - 列出所有触发器
+describe trigger <name>    - 查看触发器详细信息
+show trigger <name>        - 别名，与上等价
 
 📝 日志命令:
 log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
@@ -1323,6 +1389,42 @@ SHOW ISOLATION LEVEL;                -- 查看隔离级别
         """显示数据库统计信息"""
         stats = self.database.get_database_stats()
         format_database_stats(stats)
+
+    def _show_triggers(self):
+        """显示所有触发器"""
+        try:
+            triggers = self.database.executor.catalog.list_triggers()
+            if not triggers:
+                print("数据库中没有触发器")
+            else:
+                print(f"数据库中的触发器 ({len(triggers)} 个):")
+                for trigger in triggers:
+                    print(f"  ⚡ {trigger['name']} ({trigger['timing']} {trigger['event']} ON {trigger['table_name']})")
+        except Exception as e:
+            print(f"❌ 获取触发器列表失败: {e}")
+
+    def _describe_trigger(self, trigger_name: str):
+        """显示触发器详细信息"""
+        try:
+            trigger = self.database.executor.catalog.get_trigger(trigger_name)
+            if not trigger:
+                print(f"触发器 '{trigger_name}' 不存在")
+                return
+
+            print(f"触发器 '{trigger_name}' 详细信息:")
+            print(f"  名称: {trigger['name']}")
+            print(f"  时机: {trigger['timing']}")
+            print(f"  事件: {trigger['event']}")
+            print(f"  表名: {trigger['table_name']}")
+            print(f"  触发器体: {trigger['statement']}")
+
+            # 如果有创建时间，显示创建时间
+            if 'created_at' in trigger:
+                import datetime
+                created_time = datetime.datetime.fromtimestamp(trigger['created_at'])
+                print(f"  创建时间: {created_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            print(f"❌ 获取触发器信息失败: {e}")
 
 
 def interactive_sql_shell(database: SimpleDatabase):

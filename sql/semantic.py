@@ -14,6 +14,11 @@ from .ast_nodes import (
     ColumnRef,
     AggregateFunction,
     OrderItem,
+    CreateTableStatement,
+    DropTableStatement,
+    CreateTriggerStatement,
+    DropTriggerStatement,
+    AlterTableStatement,
 )
 
 
@@ -42,6 +47,16 @@ class SemanticAnalyzer:
             return self._analyze_update(stmt)
         elif isinstance(stmt, DeleteStatement):
             return self._analyze_delete(stmt)
+        elif isinstance(stmt, CreateTableStatement):
+            return self._analyze_create_table(stmt)
+        elif isinstance(stmt, DropTableStatement):
+            return self._analyze_drop_table(stmt)
+        elif isinstance(stmt, CreateTriggerStatement):
+            return self._analyze_create_trigger(stmt)
+        elif isinstance(stmt, DropTriggerStatement):
+            return self._analyze_drop_trigger(stmt)
+        elif isinstance(stmt, AlterTableStatement):
+            return self._analyze_alter_table(stmt)
         else:
             # 其他语句暂不做语义分析
             return AnalyzedResult(stmt)
@@ -232,4 +247,64 @@ class SemanticAnalyzer:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise SemanticError(f"表 {stmt.table_name} 不存在")
-        return AnalyzedResult(stmt) 
+        return AnalyzedResult(stmt)
+
+    def _analyze_create_table(self, stmt: CreateTableStatement) -> AnalyzedResult:
+        # CREATE TABLE
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if schema and getattr(stmt, 'if_not_exists', False):
+            # 已存在且 IF NOT EXISTS，直接通过
+            return AnalyzedResult(stmt)
+        if schema:
+            raise SemanticError(f"表 {stmt.table_name} 已存在")
+        return AnalyzedResult(stmt)
+
+    def _analyze_drop_table(self, stmt: DropTableStatement) -> AnalyzedResult:
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema and getattr(stmt, 'if_exists', False):
+            # 不存在且 IF EXISTS，直接通过
+            return AnalyzedResult(stmt)
+        if not schema:
+            raise SemanticError(f"表 {stmt.table_name} 不存在")
+        return AnalyzedResult(stmt)
+
+    # 你可以按需为索引、视图、用户等类似扩展 
+    
+    def _analyze_create_trigger(self, stmt: CreateTriggerStatement) -> AnalyzedResult:
+        """分析CREATE TRIGGER语句"""
+        # 检查表是否存在
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise SemanticError(f"表 {stmt.table_name} 不存在")
+        
+        # 检查事件是否合法
+        if stmt.event not in ('INSERT', 'UPDATE', 'DELETE'):
+            raise SemanticError(f"不支持的事件类型: {stmt.event}")
+            
+        # 检查时机是否合法
+        if stmt.timing not in ('BEFORE', 'AFTER'):
+            raise SemanticError(f"不支持的触发时机: {stmt.timing}")
+        
+        # 触发器体的语义分析在执行阶段进行（因为可能引用当前表）
+        return AnalyzedResult(stmt)
+
+    def _analyze_drop_trigger(self, stmt: DropTriggerStatement) -> AnalyzedResult:
+        """分析DROP TRIGGER语句"""
+        # 基本校验，实际的触发器存在性检查在执行阶段进行
+        return AnalyzedResult(stmt)
+
+    def _analyze_alter_table(self, stmt: 'AlterTableStatement') -> AnalyzedResult:
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise SemanticError(f"表 {stmt.table_name} 不存在")
+        if stmt.action == 'ADD':
+            col_name = stmt.column_def['name']
+            if any(c.name == col_name for c in schema.columns):
+                raise SemanticError(f"列 {col_name} 已存在于表 {stmt.table_name}")
+        elif stmt.action == 'DROP':
+            col_name = stmt.column_name
+            if not any(c.name == col_name for c in schema.columns):
+                raise SemanticError(f"列 {col_name} 不存在于表 {stmt.table_name}")
+        else:
+            raise SemanticError(f"ALTER TABLE 不支持的操作: {stmt.action}")
+        return AnalyzedResult(stmt)

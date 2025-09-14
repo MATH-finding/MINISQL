@@ -96,17 +96,18 @@ class CreateTableStatement(Statement):
         table_name: str,
         columns: List[Dict[str, Any]],
         table_constraints: List[dict] = None,
+        if_exists: bool = False,
+        if_not_exists: bool = False,
     ):
         self.table_name = table_name
-        self.columns = (
-            columns  # [{'name': str, 'type': str, 'length': int, 'constraints': [str]}]
-        )
+        self.columns = columns
         self.table_constraints = table_constraints or []
+        self.if_exists = if_exists
+        self.if_not_exists = if_not_exists
 
     def __repr__(self):
-        return (
-            f"CREATE TABLE {self.table_name} ({self.columns}, {self.table_constraints})"
-        )
+        flag = " IF NOT EXISTS" if self.if_not_exists else (" IF EXISTS" if self.if_exists else "")
+        return f"CREATE TABLE{flag} {self.table_name} ({self.columns}, {self.table_constraints})"
 
 
 class InsertStatement(Statement):
@@ -201,12 +202,14 @@ class DeleteStatement(Statement):
 
 class DropTableStatement(Statement):
     """DROP TABLE 语句"""
-
-    def __init__(self, table_name: str):
+    def __init__(self, table_name: str, if_exists: bool = False, if_not_exists: bool = False):
         self.table_name = table_name
+        self.if_exists = if_exists
+        self.if_not_exists = if_not_exists
 
     def __repr__(self):
-        return f"DROP TABLE {self.table_name}"
+        flag = " IF EXISTS" if self.if_exists else (" IF NOT EXISTS" if self.if_not_exists else "")
+        return f"DROP TABLE{flag} {self.table_name}"
 
 
 class TruncateTableStatement(Statement):
@@ -245,25 +248,26 @@ class DropIndexNode(ASTNode):
 
 class CreateIndexStatement(Statement):
     """CREATE INDEX语句"""
-
     def __init__(
         self,
         index_name: str,
         table_name: str,
         column_name: str,
         is_unique: bool = False,
+        if_not_exists: bool = False,
     ):
         self.index_name = index_name
         self.table_name = table_name
         self.column_name = column_name
         self.is_unique = is_unique
+        self.if_not_exists = if_not_exists
 
 
 class DropIndexStatement(Statement):
     """DROP INDEX语句"""
-
-    def __init__(self, index_name: str):
+    def __init__(self, index_name: str, if_exists: bool = False):
         self.index_name = index_name
+        self.if_exists = if_exists
 
 
 # JOIN相关
@@ -290,25 +294,27 @@ class JoinClause(ASTNode):
 
 # 视图相关语句
 class CreateViewStatement(Statement):
-    def __init__(self, view_name: str, view_definition: str):
+    def __init__(self, view_name: str, view_definition: str, if_not_exists: bool = False):
         self.view_name = view_name
         self.view_definition = view_definition
+        self.if_not_exists = if_not_exists
         # print(f"[AST DEBUG] CreateViewStatement created: view_name={view_name}, definition=\"{view_definition}\"")
 
 
 class DropViewStatement(Statement):
-    def __init__(self, view_name: str):
+    def __init__(self, view_name: str, if_exists: bool = False):
         self.view_name = view_name
+        self.if_exists = if_exists
         # print(f"[AST DEBUG] DropViewStatement created: view_name={view_name}")
 
 
 # 用户管理语句
 class CreateUserStatement(Statement):
     """CREATE USER 语句"""
-
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: str, password: str, if_not_exists: bool = False):
         self.username = username
         self.password = password
+        self.if_not_exists = if_not_exists
 
     def __repr__(self):
         return f"CREATE USER {self.username} IDENTIFIED BY '***'"
@@ -316,9 +322,9 @@ class CreateUserStatement(Statement):
 
 class DropUserStatement(Statement):
     """DROP USER 语句"""
-
-    def __init__(self, username: str):
+    def __init__(self, username: str, if_exists: bool = False):
         self.username = username
+        self.if_exists = if_exists
 
     def __repr__(self):
         return f"DROP USER {self.username}"
@@ -390,6 +396,57 @@ class SetIsolationLevel(Statement):
 
     def __repr__(self):
         return f"SET SESSION TRANSACTION ISOLATION LEVEL {self.level}"
+
+
+# 触发器相关语句
+class CreateTriggerStatement(Statement):
+    """CREATE TRIGGER 语句"""
+
+    def __init__(
+        self,
+        trigger_name: str,
+        timing: str,  # BEFORE 或 AFTER
+        event: str,   # INSERT, UPDATE, DELETE
+        table_name: str,
+        statement: str  # 触发器体（SQL语句）
+    ):
+        self.trigger_name = trigger_name
+        self.timing = timing.upper()
+        self.event = event.upper()
+        self.table_name = table_name
+        self.statement = statement
+
+    def __repr__(self):
+        return f"CREATE TRIGGER {self.trigger_name} {self.timing} {self.event} ON {self.table_name} FOR EACH ROW {self.statement}"
+
+
+class DropTriggerStatement(Statement):
+    """DROP TRIGGER 语句"""
+
+    def __init__(self, trigger_name: str, if_exists: bool = False):
+        self.trigger_name = trigger_name
+        self.if_exists = if_exists
+
+    def __repr__(self):
+        flag = " IF EXISTS" if self.if_exists else ""
+        return f"DROP TRIGGER{flag} {self.trigger_name}"
+
+
+# ALTER TABLE 相关
+class AlterTableStatement(Statement):
+    """ALTER TABLE 语句"""
+    def __init__(self, table_name: str, action: str, column_def: dict = None, column_name: str = None):
+        self.table_name = table_name
+        self.action = action  # 'ADD' 或 'DROP'
+        self.column_def = column_def  # dict, 仅ADD时有
+        self.column_name = column_name  # str, 仅DROP时有
+    def __repr__(self):
+        if self.action == 'ADD':
+            return f"ALTER TABLE {self.table_name} ADD COLUMN {self.column_def}"
+        elif self.action == 'DROP':
+            return f"ALTER TABLE {self.table_name} DROP COLUMN {self.column_name}"
+        else:
+            return f"ALTER TABLE {self.table_name} <UNKNOWN ACTION>"
 
 
 class ShowStatement(Statement):

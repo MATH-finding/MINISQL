@@ -134,6 +134,8 @@ class SQLExecutor:
     """SQL执行器，将AST转换为数据库操作（注释已在词法分析阶段去除）"""
 
     _next_session_id = 1
+    _next_cursor_id = 1
+    _cursors = {}
 
     def __init__(
         self, table_manager: TableManager, catalog: SystemCatalog, index_manager=None
@@ -375,6 +377,14 @@ class SQLExecutor:
                 result = self._execute_create_view(ast)
             elif isinstance(ast, DropViewStatement):
                 result = self._execute_drop_view(ast)
+            # 触发器管理语句
+            elif isinstance(ast, CreateTriggerStatement):
+                result = self._execute_create_trigger(ast)
+            elif isinstance(ast, DropTriggerStatement):
+                result = self._execute_drop_trigger(ast)
+            # ALTER TABLE
+            elif isinstance(ast, AlterTableStatement):
+                result = self._execute_alter_table(ast)
             # 数据操作语句
             elif isinstance(ast, UpdateStatement):
                 result = self._execute_update_with_undo(ast)
@@ -457,6 +467,17 @@ class SQLExecutor:
 
     def _execute_create_user(self, stmt: CreateUserStatement) -> Dict[str, Any]:
         """执行CREATE USER"""
+        # 检查用户是否已存在
+        if hasattr(self.catalog, 'list_users') and stmt.username in (self.catalog.list_users() or []):
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_USER",
+                    "username": stmt.username,
+                    "success": True,
+                    "message": f"用户 {stmt.username} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                return {"success": False, "message": f"用户 {stmt.username} 已存在"}
         success = self.catalog.create_user(stmt.username, stmt.password)
 
         if success:
@@ -471,6 +492,17 @@ class SQLExecutor:
 
     def _execute_drop_user(self, stmt: DropUserStatement) -> Dict[str, Any]:
         """执行DROP USER"""
+        # 检查用户是否已存在
+        if hasattr(self.catalog, 'list_users') and stmt.username not in (self.catalog.list_users() or []):
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_USER",
+                    "username": stmt.username,
+                    "success": True,
+                    "message": f"用户 {stmt.username} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                return {"success": False, "message": f"用户 {stmt.username} 不存在"}
         success = self.catalog.drop_user(stmt.username)
 
         if success:
@@ -487,6 +519,17 @@ class SQLExecutor:
             }
 
     def _execute_create_view(self, stmt):
+        # 检查视图是否已存在
+        if hasattr(self.catalog, 'views') and stmt.view_name in getattr(self.catalog, 'views', {}):
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_VIEW",
+                    "view_name": stmt.view_name,
+                    "success": True,
+                    "message": f"视图 {stmt.view_name} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                raise ValueError(f"视图 {stmt.view_name} 已存在")
         self.catalog.create_view(stmt.view_name, stmt.view_definition)
         return {
             "type": "CREATE_VIEW",
@@ -496,6 +539,16 @@ class SQLExecutor:
         }
 
     def _execute_drop_view(self, stmt):
+        if hasattr(self.catalog, 'views') and stmt.view_name not in getattr(self.catalog, 'views', {}):
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_VIEW",
+                    "view_name": stmt.view_name,
+                    "success": True,
+                    "message": f"视图 {stmt.view_name} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                raise ValueError(f"视图 {stmt.view_name} 不存在")
         self.catalog.drop_view(stmt.view_name)
         return {
             "type": "DROP_VIEW",
@@ -552,6 +605,18 @@ class SQLExecutor:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 执行BEFORE INSERT触发器
+        before_results = self._execute_triggers(stmt.table_name, "INSERT", "BEFORE")
+        
+        # 检查BEFORE触发器是否都成功
+        for result in before_results:
+            if not result.get("success", False):
+                return {
+                    "type": "INSERT",
+                    "success": False,
+                    "message": f"BEFORE INSERT触发器失败: {result.get('message', '')}"
+                }
 
         # SERIALIZABLE: 写锁
         self._maybe_lock_exclusive(stmt.table_name)
@@ -704,11 +769,18 @@ class SQLExecutor:
 
             inserted_count += 1
 
+        # 执行AFTER INSERT触发器
+        after_results = self._execute_triggers(stmt.table_name, "INSERT", "AFTER")
+
         return {
             "type": "INSERT",
             "table_name": stmt.table_name,
             "rows_inserted": inserted_count,
             "success": True,
+            "trigger_results": {
+                "before": before_results,
+                "after": after_results
+            },
             "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
         }
 
@@ -791,7 +863,19 @@ class SQLExecutor:
                 pass
 
     def _execute_create_table(self, stmt: CreateTableStatement) -> Dict[str, Any]:
-        """执行CREATE TABLE"""
+        """执行CREATE TABLE，支持 IF NOT EXISTS"""
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if schema:
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_TABLE",
+                    "table_name": stmt.table_name,
+                    "success": True,
+                    "message": f"表 {stmt.table_name} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                raise ValueError(f"表 {stmt.table_name} 已存在")
+
         columns = []
 
         for col_def in stmt.columns:
@@ -856,11 +940,18 @@ class SQLExecutor:
         }
 
     def _execute_drop_table(self, stmt: DropTableStatement) -> Dict[str, Any]:
-        """执行DROP TABLE"""
-        # 检查表是否存在
+        """执行DROP TABLE，支持 IF EXISTS"""
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise ValueError(f"表 {stmt.table_name} 不存在")
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_TABLE",
+                    "table_name": stmt.table_name,
+                    "success": True,
+                    "message": f"表 {stmt.table_name} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                raise ValueError(f"表 {stmt.table_name} 不存在")
 
         # 删除表相关的所有索引
         if self.index_manager:
@@ -1408,7 +1499,18 @@ class SQLExecutor:
         }
 
     def _execute_create_index(self, stmt: CreateIndexStatement) -> Dict[str, Any]:
-        """执行CREATE INDEX"""
+        """执行CREATE INDEX，支持 IF NOT EXISTS"""
+        # 检查索引是否已存在
+        if self.index_manager and stmt.index_name in getattr(self.index_manager, 'indexes', {}):
+            if getattr(stmt, 'if_not_exists', False):
+                return {
+                    "type": "CREATE_INDEX",
+                    "index_name": stmt.index_name,
+                    "success": True,
+                    "message": f"索引 {stmt.index_name} 已存在，已忽略 (IF NOT EXISTS)",
+                }
+            else:
+                raise ValueError(f"索引 {stmt.index_name} 已存在")
         if not self.index_manager:
             raise ValueError("索引管理器未初始化")
 
@@ -1442,7 +1544,17 @@ class SQLExecutor:
         }
 
     def _execute_drop_index(self, stmt: DropIndexStatement) -> Dict[str, Any]:
-        """执行DROP INDEX"""
+        """执行DROP INDEX，支持 IF EXISTS"""
+        if self.index_manager and stmt.index_name not in getattr(self.index_manager, 'indexes', {}):
+            if getattr(stmt, 'if_exists', False):
+                return {
+                    "type": "DROP_INDEX",
+                    "index_name": stmt.index_name,
+                    "success": True,
+                    "message": f"索引 {stmt.index_name} 不存在，已忽略 (IF EXISTS)",
+                }
+            else:
+                raise ValueError(f"索引 {stmt.index_name} 不存在")
         if not self.index_manager:
             raise ValueError("索引管理器未初始化")
 
@@ -1551,6 +1663,18 @@ class SQLExecutor:
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
 
+        # 执行BEFORE UPDATE触发器
+        before_results = self._execute_triggers(stmt.table_name, "UPDATE", "BEFORE")
+        
+        # 检查BEFORE触发器是否都成功
+        for result in before_results:
+            if not result.get("success", False):
+                return {
+                    "type": "UPDATE",
+                    "success": False,
+                    "message": f"BEFORE UPDATE触发器失败: {result.get('message', '')}"
+                }
+
         # 预计算 updates 值
         updates: Dict[str, Any] = {}
         for set_clause in stmt.set_clauses:
@@ -1602,12 +1726,19 @@ class SQLExecutor:
             if hasattr(self.table_manager, 'update_records'):
                 updated = self.table_manager.update_records(stmt.table_name, updates, condition_func)
 
+        # 执行AFTER UPDATE触发器
+        after_results = self._execute_triggers(stmt.table_name, "UPDATE", "AFTER")
+
         return {
             "type": "UPDATE",
             "table_name": stmt.table_name,
             "rows_updated": updated,
             "success": True,
-            "message": f"成功更新 {updated} 行"
+            "message": f"成功更新 {updated} 行",
+            "trigger_results": {
+                "before": before_results,
+                "after": after_results
+            }
         }
 
     def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
@@ -1622,6 +1753,18 @@ class SQLExecutor:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 执行BEFORE DELETE触发器
+        before_results = self._execute_triggers(stmt.table_name, "DELETE", "BEFORE")
+        
+        # 检查BEFORE触发器是否都成功
+        for result in before_results:
+            if not result.get("success", False):
+                return {
+                    "type": "DELETE",
+                    "success": False,
+                    "message": f"BEFORE DELETE触发器失败: {result.get('message', '')}"
+                }
 
         deleted = 0
 
@@ -1662,12 +1805,19 @@ class SQLExecutor:
             if hasattr(self.table_manager, 'delete_records'):
                 deleted = self.table_manager.delete_records(stmt.table_name, condition_func)
 
+        # 执行AFTER DELETE触发器
+        after_results = self._execute_triggers(stmt.table_name, "DELETE", "AFTER")
+
         return {
             "type": "DELETE",
             "table_name": stmt.table_name,
             "rows_deleted": deleted,
             "success": True,
-            "message": f"成功删除 {deleted} 行"
+            "message": f"成功删除 {deleted} 行",
+            "trigger_results": {
+                "before": before_results,
+                "after": after_results
+            }
         }
 
     def _execute_delete(self, stmt: DeleteStatement) -> Dict[str, Any]:
@@ -1761,3 +1911,183 @@ class SQLExecutor:
             except Exception as e:
                 results.append({"success": False, "error": str(e), "message": f"SQL执行失败: {e}"})
         return results
+
+    # =============== 触发器执行方法 ===============
+    def _execute_create_trigger(self, ast: CreateTriggerStatement) -> Dict[str, Any]:
+        """执行CREATE TRIGGER语句"""
+        # 权限检查 - 需要CREATE权限
+        if self.current_user and not self.catalog.check_privilege(self.current_user, ast.table_name, "CREATE"):
+            return {"success": False, "message": f"用户 {self.current_user} 没有表 {ast.table_name} 的CREATE权限"}
+
+        try:
+            success = self.catalog.create_trigger(
+                ast.trigger_name,
+                ast.timing,
+                ast.event,
+                ast.table_name,
+                ast.statement
+            )
+            
+            if success:
+                return {
+                    "type": "CREATE_TRIGGER",
+                    "success": True,
+                    "message": f"触发器 {ast.trigger_name} 创建成功"
+                }
+            else:
+                return {
+                    "type": "CREATE_TRIGGER",
+                    "success": False,
+                    "message": f"触发器 {ast.trigger_name} 已存在"
+                }
+                
+        except Exception as e:
+            return {
+                "type": "CREATE_TRIGGER",
+                "success": False,
+                "message": f"创建触发器失败: {str(e)}"
+            }
+
+    def _execute_drop_trigger(self, ast: DropTriggerStatement) -> Dict[str, Any]:
+        """执行DROP TRIGGER语句"""
+        try:
+            success = self.catalog.drop_trigger(ast.trigger_name, ast.if_exists)
+            
+            if success:
+                return {
+                    "type": "DROP_TRIGGER",
+                    "success": True,
+                    "message": f"触发器 {ast.trigger_name} 删除成功"
+                }
+            else:
+                return {
+                    "type": "DROP_TRIGGER",
+                    "success": False,
+                    "message": f"触发器 {ast.trigger_name} 不存在"
+                }
+                
+        except Exception as e:
+            return {
+                "type": "DROP_TRIGGER",
+                "success": False,
+                "message": f"删除触发器失败: {str(e)}"
+            }
+
+    def _execute_triggers(self, table_name: str, event: str, timing: str) -> List[Dict[str, Any]]:
+        """执行触发器"""
+        triggers = self.catalog.get_triggers_for_event(table_name, event, timing)
+        results = []
+        
+        for trigger in triggers:
+            try:
+                # 解析并执行触发器体
+                from sql.lexer import SQLLexer
+                from sql.parser import SQLParser
+                
+                # 添加分号确保语句完整
+                trigger_sql = trigger['statement']
+                if not trigger_sql.endswith(';'):
+                    trigger_sql += ';'
+                
+                lexer = SQLLexer(trigger_sql)
+                tokens = lexer.tokenize()
+                parser = SQLParser(tokens)
+                trigger_ast = parser.parse()
+                
+                # 递归执行触发器体
+                result = self.execute(trigger_ast)
+                results.append({
+                    "trigger_name": trigger['name'],
+                    "success": result.get("success", False),
+                    "message": result.get("message", "")
+                })
+                
+                # 如果触发器执行失败，可以选择是否中断整个操作
+                if not result.get("success", False):
+                    print(f"警告: 触发器 {trigger['name']} 执行失败: {result.get('message', '')}")
+                    
+            except Exception as e:
+                results.append({
+                    "trigger_name": trigger['name'],
+                    "success": False,
+                    "message": f"触发器执行异常: {str(e)}"
+                })
+                print(f"警告: 触发器 {trigger['name']} 执行异常: {str(e)}")
+        
+        return results
+
+    def _execute_alter_table(self, stmt):
+        """执行ALTER TABLE ADD/DROP COLUMN"""
+        if stmt.action == 'ADD':
+            # 需要将dict转为ColumnDefinition
+            from catalog import ColumnDefinition, DataType
+            col_def = stmt.column_def
+            data_type_map = {
+                "INTEGER": DataType.INTEGER,
+                "VARCHAR": DataType.VARCHAR,
+                "FLOAT": DataType.FLOAT,
+                "BOOLEAN": DataType.BOOLEAN,
+                "CHAR": DataType.CHAR,
+                "DECIMAL": DataType.DECIMAL,
+                "DATE": DataType.DATE,
+                "TIME": DataType.TIME,
+                "DATETIME": DataType.DATETIME,
+                "BIGINT": DataType.BIGINT,
+                "TINYINT": DataType.TINYINT,
+                "TEXT": DataType.TEXT,
+            }
+            data_type = data_type_map.get(col_def["type"])
+            column = ColumnDefinition(
+                name=col_def["name"],
+                data_type=data_type,
+                max_length=col_def["length"],
+                nullable=True if "NULL" in col_def.get("constraints", []) else False,
+                primary_key="PRIMARY KEY" in col_def.get("constraints", []),
+                unique="UNIQUE" in col_def.get("constraints", []),
+                default=col_def.get("default"),
+                check=col_def.get("check"),
+                foreign_key=col_def.get("foreign_key"),
+            )
+            self.catalog.add_column(stmt.table_name, column)
+            return {"type": "ALTER_TABLE", "success": True, "message": f"表 {stmt.table_name} 添加列 {column.name} 成功"}
+        elif stmt.action == 'DROP':
+            self.catalog.drop_column(stmt.table_name, stmt.column_name)
+            return {"type": "ALTER_TABLE", "success": True, "message": f"表 {stmt.table_name} 删除列 {stmt.column_name} 成功"}
+        else:
+            return {"type": "ALTER_TABLE", "success": False, "message": f"不支持的ALTER操作: {stmt.action}"}
+
+    def open_cursor(self, sql: str):
+        """打开游标，返回游标ID。只支持SELECT"""
+        from sql.lexer import SQLLexer
+        from sql.parser import SQLParser
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        ast = parser.parse()
+        if not hasattr(ast, 'columns'):
+            raise ValueError("仅支持SELECT语句游标")
+        result = self._execute_select(ast)
+        rows = result.get('data', [])
+        cursor_id = SQLExecutor._next_cursor_id
+        SQLExecutor._next_cursor_id += 1
+        SQLExecutor._cursors[cursor_id] = {'rows': rows, 'pos': 0}
+        return cursor_id
+
+    def fetch_cursor(self, cursor_id: int, n: int = 10):
+        """从游标中取n行，返回数据和是否结束。"""
+        cursor = SQLExecutor._cursors.get(cursor_id)
+        if not cursor:
+            raise ValueError(f"无效的游标ID: {cursor_id}")
+        rows = cursor['rows']
+        pos = cursor['pos']
+        batch = rows[pos:pos+n]
+        cursor['pos'] += len(batch)
+        done = cursor['pos'] >= len(rows)
+        return {'rows': batch, 'done': done}
+
+    def close_cursor(self, cursor_id: int):
+        """关闭游标，释放资源。"""
+        if cursor_id in SQLExecutor._cursors:
+            del SQLExecutor._cursors[cursor_id]
+            return True
+        return False

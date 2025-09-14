@@ -12,6 +12,7 @@ from typing import Set
 
 import hashlib
 import time
+import os
 from typing import Set
 
 
@@ -20,8 +21,11 @@ class SystemCatalog:
         self.buffer_manager = buffer_manager
         self.tables: Dict[str, TableSchema] = {}
         self.table_pages: Dict[str, List[int]] = {}
-        self.catalog_page_id = 0
+        self.catalog_page_id = 1  # 修改：使用页面1而不是页面0，避开头部页面
         self.views = {}
+
+        # 触发器管理
+        self.triggers: Dict[str, Dict] = {}  # trigger_name -> trigger_definition
 
         # 用户和权限管理
         self.users: Dict[str, dict] = {}  # username -> {password_hash, created_at}
@@ -162,6 +166,8 @@ class SystemCatalog:
                 username: {table: list(privs) for table, privs in user_privs.items()}
                 for username, user_privs in self.privileges.items()
             },
+            "views": self.views,
+            "triggers": self.triggers,
         }
         catalog_bytes = pickle.dumps(catalog_data)
 
@@ -177,10 +183,16 @@ class SystemCatalog:
 
         # 添加强制刷新到磁盘
         self.buffer_manager.flush_all()
+        print(f"[DEBUG] 保存的数据: users={len(self.users)}, tables={len(self.tables)}")
 
     def _load_catalog(self):
         """从磁盘加载系统目录"""
         try:
+            # 检查目录页面是否存在
+            if self.buffer_manager.page_manager.get_page_count() <= self.catalog_page_id:
+                self._create_empty_catalog()
+                return
+
             page = self.buffer_manager.get_page(self.catalog_page_id)
             try:
                 data_length = page.read_int(0)
@@ -191,6 +203,8 @@ class SystemCatalog:
                     self.tables = catalog_data.get("tables", {})
                     self.table_pages = catalog_data.get("table_pages", {})
                     self.users = catalog_data.get("users", {})
+                    self.views = catalog_data.get("views", {})
+                    self.triggers = catalog_data.get("triggers", {})
 
                     # 转换权限数据结构
                     privileges_data = catalog_data.get("privileges", {})
@@ -200,21 +214,30 @@ class SystemCatalog:
                         }
                         for username, user_privs in privileges_data.items()
                     }
+
+                else:
+                    self._create_empty_catalog()
             finally:
                 self.buffer_manager.unpin_page(self.catalog_page_id, False)
-        except:
+        except Exception as e:
             self._create_empty_catalog()
 
     def _create_empty_catalog(self):
         """创建空的系统目录"""
         try:
-            page = self.buffer_manager.page_manager.allocate_page()
-            self.catalog_page_id = page.page_id
-            page.write_int(0, 0)  # 数据长度为0
-            self.buffer_manager.page_manager.write_page(page)
-        except:
-            # 页面已存在，直接使用
-            pass
+            # 确保目录页面存在
+            while self.buffer_manager.page_manager.get_page_count() <= self.catalog_page_id:
+                page = self.buffer_manager.page_manager.allocate_page()
+
+            page = self.buffer_manager.get_page(self.catalog_page_id)
+            try:
+                page.write_int(0, 0)  # 数据长度为0
+                print(f"[DEBUG] 初始化空目录页面: {self.catalog_page_id}")
+            finally:
+                self.buffer_manager.unpin_page(self.catalog_page_id, True)
+
+        except Exception as e:
+            print(f"[DEBUG] 创建空目录失败: {e}")
 
     def drop_table(self, table_name: str) -> bool:
         """删除表的元数据"""
@@ -230,7 +253,6 @@ class SystemCatalog:
         self._save_catalog()
         print(f"表 {table_name} 的元数据删除成功")
         return True
-
 
     def create_table(self, table_name: str, columns: List[ColumnDefinition]):
         """创建表"""
@@ -288,3 +310,76 @@ class SystemCatalog:
         if view_name not in self.views:
             raise ValueError(f"视图 {view_name} 不存在")
         return self.views[view_name]
+
+    # 触发器管理方法
+    def create_trigger(self, trigger_name: str, timing: str, event: str, table_name: str, statement: str) -> bool:
+        """创建触发器"""
+        if trigger_name in self.triggers:
+            return False
+        
+        # 检查表是否存在
+        if table_name not in self.tables:
+            raise ValueError(f"表 {table_name} 不存在")
+        
+        self.triggers[trigger_name] = {
+            'name': trigger_name,
+            'timing': timing.upper(),  # BEFORE/AFTER
+            'event': event.upper(),    # INSERT/UPDATE/DELETE
+            'table_name': table_name,
+            'statement': statement,
+            'created_at': time.time()
+        }
+        
+        self._save_catalog()
+        return True
+
+    def drop_trigger(self, trigger_name: str, if_exists: bool = False) -> bool:
+        """删除触发器"""
+        if trigger_name not in self.triggers:
+            if if_exists:
+                return True
+            return False
+        
+        del self.triggers[trigger_name]
+        self._save_catalog()
+        return True
+
+    def list_triggers(self) -> List[Dict]:
+        """列出所有触发器"""
+        return list(self.triggers.values())
+
+    def get_triggers_for_event(self, table_name: str, event: str, timing: str) -> List[Dict]:
+        """获取特定表、事件和时机的触发器"""
+        result = []
+        for trigger in self.triggers.values():
+            if (trigger['table_name'] == table_name and 
+                trigger['event'] == event.upper() and 
+                trigger['timing'] == timing.upper()):
+                result.append(trigger)
+        return result
+
+    def get_trigger(self, trigger_name: str) -> Optional[Dict]:
+        """获取特定触发器"""
+        return self.triggers.get(trigger_name)
+
+    def add_column(self, table_name, column):
+        schema = self.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+        # 检查列名重复
+        if any(c.name == column.name for c in schema.columns):
+            raise ValueError(f"列 {column.name} 已存在于表 {table_name}")
+        schema.columns.append(column)
+        # 可选：更新表数据文件，给每条记录补NULL（略，最小实现只改元数据）
+        self._save_catalog()
+
+    def drop_column(self, table_name, column_name):
+        schema = self.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+        # 检查列存在
+        if not any(c.name == column_name for c in schema.columns):
+            raise ValueError(f"列 {column_name} 不存在于表 {table_name}")
+        schema.columns = [c for c in schema.columns if c.name != column_name]
+        # 可选：更新表数据文件，删除该列（略，最小实现只改元数据）
+        self._save_catalog()

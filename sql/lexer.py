@@ -88,6 +88,20 @@ class TokenType(Enum):
     TO = "TO"
     ALL = "ALL"
     PRIVILEGES = "PRIVILEGES"
+    # 新增：IF EXISTS 支持
+    IF = "IF"
+    EXISTS = "EXISTS"
+    # 触发器关键字
+    TRIGGER = "TRIGGER"
+    BEFORE = "BEFORE"
+    AFTER = "AFTER"
+    FOR = "FOR"
+    EACH = "EACH"
+    ROW = "ROW"
+    EVENT = "EVENT"
+    ALTER = "ALTER"
+    ADD = "ADD"
+    COLUMN = "COLUMN"
     SHOW = "SHOW"
 
     # 布尔值
@@ -112,6 +126,7 @@ class TokenType(Enum):
     SEMICOLON = ";"  # 仅英文分号;被识别为语句结束符，中文分号；不被识别
     LEFT_PAREN = "("
     RIGHT_PAREN = ")"
+    BACKSLASH = "\\"
 
     # 特殊
     WHITESPACE = "WHITESPACE"
@@ -208,6 +223,20 @@ class SQLLexer:
         "TO": TokenType.TO,
         "ALL": TokenType.ALL,
         "PRIVILEGES": TokenType.PRIVILEGES,
+        # 新增：IF EXISTS 支持
+        "IF": TokenType.IF,
+        "EXISTS": TokenType.EXISTS,
+        # 触发器关键字
+        "TRIGGER": TokenType.TRIGGER,
+        "BEFORE": TokenType.BEFORE,
+        "AFTER": TokenType.AFTER,
+        "FOR": TokenType.FOR,
+        "EACH": TokenType.EACH,
+        "ROW": TokenType.ROW,
+        "EVENT": TokenType.EVENT,
+        "ALTER": TokenType.ALTER,
+        "ADD": TokenType.ADD,
+        "COLUMN": TokenType.COLUMN,
         "SHOW": TokenType.SHOW,
     }
 
@@ -262,6 +291,9 @@ class SQLLexer:
                 self._add_single_char_token(TokenType.STAR, char)
             elif char == ".":
                 self._read_dot()
+            elif char == "\\":
+                # 处理反斜杠：可能是转义字符或路径分隔符
+                self._read_backslash()
             else:
                 raise SyntaxError(
                     f"未识别的字符 '{char}' 在行 {self.line}, 列 {self.column}"
@@ -430,6 +462,10 @@ class SQLLexer:
         """添加Token（不移动位置）"""
         token = Token(token_type, value, self.line, self.column)
         self.tokens.append(token)
+
+    def _read_backslash(self):
+        """处理反斜杠字符"""
+        self._add_single_char_token(TokenType.BACKSLASH, "\\")
 
     def _add_single_char_token(self, token_type: TokenType, char: str):
         """添加单字符Token并移动位置"""
