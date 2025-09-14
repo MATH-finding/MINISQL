@@ -266,6 +266,11 @@ class SQLExecutor:
                 result = self._execute_create_view(ast)
             elif isinstance(ast, DropViewStatement):
                 result = self._execute_drop_view(ast)
+            # 触发器管理语句
+            elif isinstance(ast, CreateTriggerStatement):
+                result = self._execute_create_trigger(ast)
+            elif isinstance(ast, DropTriggerStatement):
+                result = self._execute_drop_trigger(ast)
             # 数据操作语句
             elif isinstance(ast, UpdateStatement):
                 result = self._execute_update_with_undo(ast)
@@ -482,6 +487,18 @@ class SQLExecutor:
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
 
+        # 执行BEFORE INSERT触发器
+        before_results = self._execute_triggers(stmt.table_name, "INSERT", "BEFORE")
+        
+        # 检查BEFORE触发器是否都成功
+        for result in before_results:
+            if not result.get("success", False):
+                return {
+                    "type": "INSERT",
+                    "success": False,
+                    "message": f"BEFORE INSERT触发器失败: {result.get('message', '')}"
+                }
+
         # SERIALIZABLE: 写锁
         self._maybe_lock_exclusive(stmt.table_name)
 
@@ -619,11 +636,18 @@ class SQLExecutor:
 
             inserted_count += 1
 
+        # 执行AFTER INSERT触发器
+        after_results = self._execute_triggers(stmt.table_name, "INSERT", "AFTER")
+
         return {
             "type": "INSERT",
             "table_name": stmt.table_name,
             "rows_inserted": inserted_count,
             "success": True,
+            "trigger_results": {
+                "before": before_results,
+                "after": after_results
+            },
             "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
         }
 
@@ -1431,6 +1455,18 @@ class SQLExecutor:
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
 
+        # 执行BEFORE UPDATE触发器
+        before_results = self._execute_triggers(stmt.table_name, "UPDATE", "BEFORE")
+        
+        # 检查BEFORE触发器是否都成功
+        for result in before_results:
+            if not result.get("success", False):
+                return {
+                    "type": "UPDATE",
+                    "success": False,
+                    "message": f"BEFORE UPDATE触发器失败: {result.get('message', '')}"
+                }
+
         # 预计算 updates 值
         updates: Dict[str, Any] = {}
         for set_clause in stmt.set_clauses:
@@ -1469,12 +1505,19 @@ class SQLExecutor:
             if hasattr(self.table_manager, 'update_records'):
                 updated = self.table_manager.update_records(stmt.table_name, updates, condition_func)
 
+        # 执行AFTER UPDATE触发器
+        after_results = self._execute_triggers(stmt.table_name, "UPDATE", "AFTER")
+
         return {
             "type": "UPDATE",
             "table_name": stmt.table_name,
             "rows_updated": updated,
             "success": True,
-            "message": f"成功更新 {updated} 行"
+            "message": f"成功更新 {updated} 行",
+            "trigger_results": {
+                "before": before_results,
+                "after": after_results
+            }
         }
 
     def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
@@ -1489,6 +1532,18 @@ class SQLExecutor:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
+
+        # 执行BEFORE DELETE触发器
+        before_results = self._execute_triggers(stmt.table_name, "DELETE", "BEFORE")
+        
+        # 检查BEFORE触发器是否都成功
+        for result in before_results:
+            if not result.get("success", False):
+                return {
+                    "type": "DELETE",
+                    "success": False,
+                    "message": f"BEFORE DELETE触发器失败: {result.get('message', '')}"
+                }
 
         deleted = 0
 
@@ -1515,12 +1570,19 @@ class SQLExecutor:
             if hasattr(self.table_manager, 'delete_records'):
                 deleted = self.table_manager.delete_records(stmt.table_name, condition_func)
 
+        # 执行AFTER DELETE触发器
+        after_results = self._execute_triggers(stmt.table_name, "DELETE", "AFTER")
+
         return {
             "type": "DELETE",
             "table_name": stmt.table_name,
             "rows_deleted": deleted,
             "success": True,
-            "message": f"成功删除 {deleted} 行"
+            "message": f"成功删除 {deleted} 行",
+            "trigger_results": {
+                "before": before_results,
+                "after": after_results
+            }
         }
 
     def _execute_delete(self, stmt: DeleteStatement) -> Dict[str, Any]:
@@ -1587,4 +1649,108 @@ class SQLExecutor:
                 results.append(res)
             except Exception as e:
                 results.append({"success": False, "error": str(e), "message": f"SQL执行失败: {e}"})
+        return results
+
+    # =============== 触发器执行方法 ===============
+    def _execute_create_trigger(self, ast: CreateTriggerStatement) -> Dict[str, Any]:
+        """执行CREATE TRIGGER语句"""
+        # 权限检查 - 需要CREATE权限
+        if self.current_user and not self.catalog.check_privilege(self.current_user, ast.table_name, "CREATE"):
+            return {"success": False, "message": f"用户 {self.current_user} 没有表 {ast.table_name} 的CREATE权限"}
+
+        try:
+            success = self.catalog.create_trigger(
+                ast.trigger_name,
+                ast.timing,
+                ast.event,
+                ast.table_name,
+                ast.statement
+            )
+            
+            if success:
+                return {
+                    "type": "CREATE_TRIGGER",
+                    "success": True,
+                    "message": f"触发器 {ast.trigger_name} 创建成功"
+                }
+            else:
+                return {
+                    "type": "CREATE_TRIGGER",
+                    "success": False,
+                    "message": f"触发器 {ast.trigger_name} 已存在"
+                }
+                
+        except Exception as e:
+            return {
+                "type": "CREATE_TRIGGER",
+                "success": False,
+                "message": f"创建触发器失败: {str(e)}"
+            }
+
+    def _execute_drop_trigger(self, ast: DropTriggerStatement) -> Dict[str, Any]:
+        """执行DROP TRIGGER语句"""
+        try:
+            success = self.catalog.drop_trigger(ast.trigger_name, ast.if_exists)
+            
+            if success:
+                return {
+                    "type": "DROP_TRIGGER",
+                    "success": True,
+                    "message": f"触发器 {ast.trigger_name} 删除成功"
+                }
+            else:
+                return {
+                    "type": "DROP_TRIGGER",
+                    "success": False,
+                    "message": f"触发器 {ast.trigger_name} 不存在"
+                }
+                
+        except Exception as e:
+            return {
+                "type": "DROP_TRIGGER",
+                "success": False,
+                "message": f"删除触发器失败: {str(e)}"
+            }
+
+    def _execute_triggers(self, table_name: str, event: str, timing: str) -> List[Dict[str, Any]]:
+        """执行触发器"""
+        triggers = self.catalog.get_triggers_for_event(table_name, event, timing)
+        results = []
+        
+        for trigger in triggers:
+            try:
+                # 解析并执行触发器体
+                from sql.lexer import SQLLexer
+                from sql.parser import SQLParser
+                
+                # 添加分号确保语句完整
+                trigger_sql = trigger['statement']
+                if not trigger_sql.endswith(';'):
+                    trigger_sql += ';'
+                
+                lexer = SQLLexer(trigger_sql)
+                tokens = lexer.tokenize()
+                parser = SQLParser(tokens)
+                trigger_ast = parser.parse()
+                
+                # 递归执行触发器体
+                result = self.execute(trigger_ast)
+                results.append({
+                    "trigger_name": trigger['name'],
+                    "success": result.get("success", False),
+                    "message": result.get("message", "")
+                })
+                
+                # 如果触发器执行失败，可以选择是否中断整个操作
+                if not result.get("success", False):
+                    print(f"警告: 触发器 {trigger['name']} 执行失败: {result.get('message', '')}")
+                    
+            except Exception as e:
+                results.append({
+                    "trigger_name": trigger['name'],
+                    "success": False,
+                    "message": f"触发器执行异常: {str(e)}"
+                })
+                print(f"警告: 触发器 {trigger['name']} 执行异常: {str(e)}")
+        
         return results

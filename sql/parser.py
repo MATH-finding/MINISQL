@@ -36,6 +36,9 @@ class SQLParser:
             elif self._peek_token_type(1) == TokenType.VIEW:
                 # print("[PARSER DEBUG] dispatching to _parse_create_view")
                 return self._parse_create_view()
+            # CREATE TRIGGER
+            elif self._peek_token_type(1) == TokenType.TRIGGER:
+                return self._parse_create_trigger()
             # CREATE TABLE/INDEX
             else:
                 # print("[PARSER DEBUG] dispatching to _parse_create_statement")
@@ -48,6 +51,9 @@ class SQLParser:
             elif self._peek_token_type(1) == TokenType.VIEW:
                 # print("[PARSER DEBUG] dispatching to _parse_drop_view")
                 return self._parse_drop_view()
+            # DROP TRIGGER
+            elif self._peek_token_type(1) == TokenType.TRIGGER:
+                return self._parse_drop_trigger()
             # DROP TABLE/INDEX
             else:
                 # print("[PARSER DEBUG] dispatching to _parse_drop_statement")
@@ -884,3 +890,66 @@ class SQLParser:
                 raise SyntaxError("未知的隔离级别")
         else:
             raise SyntaxError("仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ...")
+
+    def _parse_create_trigger(self) -> CreateTriggerStatement:
+        """解析 CREATE TRIGGER 语句"""
+        self._expect(TokenType.CREATE)
+        self._expect(TokenType.TRIGGER)
+        
+        # 触发器名称
+        trigger_name = self._expect(TokenType.IDENTIFIER).value
+        
+        # 时机: BEFORE 或 AFTER
+        if self.current_token.type not in (TokenType.BEFORE, TokenType.AFTER):
+            raise SyntaxError(f"期望 BEFORE 或 AFTER，但得到 {self.current_token.value}")
+        timing = self.current_token.value
+        self._advance()
+        
+        # 事件: INSERT, UPDATE, DELETE
+        if self.current_token.type not in (TokenType.INSERT, TokenType.UPDATE, TokenType.DELETE):
+            raise SyntaxError(f"期望 INSERT, UPDATE 或 DELETE，但得到 {self.current_token.value}")
+        event = self.current_token.value
+        self._advance()
+        
+        # ON 关键字
+        self._expect(TokenType.ON)
+        
+        # 表名
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        
+        # FOR EACH ROW
+        self._expect(TokenType.FOR)
+        self._expect(TokenType.EACH)
+        self._expect(TokenType.ROW)
+        
+        # 触发器体（简化为单个SQL语句字符串）
+        statement_tokens = []
+        while (self.current_token and 
+               self.current_token.type != TokenType.SEMICOLON and 
+               self.current_token.type != TokenType.EOF):
+            statement_tokens.append(self.current_token.value)
+            self._advance()
+        
+        if not statement_tokens:
+            raise SyntaxError("触发器体不能为空")
+            
+        statement = " ".join(statement_tokens)
+        
+        return CreateTriggerStatement(trigger_name, timing, event, table_name, statement)
+
+    def _parse_drop_trigger(self) -> DropTriggerStatement:
+        """解析 DROP TRIGGER 语句"""
+        self._expect(TokenType.DROP)
+        self._expect(TokenType.TRIGGER)
+        
+        # 检查 IF EXISTS
+        if_exists = False
+        if (self.current_token and self.current_token.type == TokenType.IF):
+            self._advance()
+            self._expect(TokenType.EXISTS)
+            if_exists = True
+        
+        # 触发器名称
+        trigger_name = self._expect(TokenType.IDENTIFIER).value
+        
+        return DropTriggerStatement(trigger_name, if_exists)

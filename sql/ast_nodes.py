@@ -396,3 +396,37 @@ class SetIsolationLevel(Statement):
 
     def __repr__(self):
         return f"SET SESSION TRANSACTION ISOLATION LEVEL {self.level}"
+
+
+# 触发器相关语句
+class CreateTriggerStatement(Statement):
+    """CREATE TRIGGER 语句"""
+
+    def __init__(
+        self,
+        trigger_name: str,
+        timing: str,  # BEFORE 或 AFTER
+        event: str,   # INSERT, UPDATE, DELETE
+        table_name: str,
+        statement: str  # 触发器体（SQL语句）
+    ):
+        self.trigger_name = trigger_name
+        self.timing = timing.upper()
+        self.event = event.upper()
+        self.table_name = table_name
+        self.statement = statement
+
+    def __repr__(self):
+        return f"CREATE TRIGGER {self.trigger_name} {self.timing} {self.event} ON {self.table_name} FOR EACH ROW {self.statement}"
+
+
+class DropTriggerStatement(Statement):
+    """DROP TRIGGER 语句"""
+
+    def __init__(self, trigger_name: str, if_exists: bool = False):
+        self.trigger_name = trigger_name
+        self.if_exists = if_exists
+
+    def __repr__(self):
+        flag = " IF EXISTS" if self.if_exists else ""
+        return f"DROP TRIGGER{flag} {self.trigger_name}"

@@ -115,6 +115,9 @@ class SimpleDatabase:
         if self.catalog.authenticate_user(username, password):
             self.current_user = username
             self.is_authenticated = True
+            # 同步设置所有executor的current_user
+            for executor in self._executors:
+                executor.current_user = username
             return {"success": True, "message": f"用户 {username} 登录成功"}
         else:
             return {"success": False, "message": "用户名或密码错误"}
@@ -124,6 +127,9 @@ class SimpleDatabase:
         user = self.current_user
         self.current_user = None
         self.is_authenticated = False
+        # 同步清理所有executor的current_user
+        for executor in self._executors:
+            executor.current_user = None
         return {"success": True, "message": f"用户 {user} 已登出"}
 
     def get_current_user(self) -> Optional[str]:

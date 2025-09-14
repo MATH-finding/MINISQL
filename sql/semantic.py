@@ -16,6 +16,8 @@ from .ast_nodes import (
     OrderItem,
     CreateTableStatement,
     DropTableStatement,
+    CreateTriggerStatement,
+    DropTriggerStatement,
 )
 
 
@@ -48,6 +50,10 @@ class SemanticAnalyzer:
             return self._analyze_create_table(stmt)
         elif isinstance(stmt, DropTableStatement):
             return self._analyze_drop_table(stmt)
+        elif isinstance(stmt, CreateTriggerStatement):
+            return self._analyze_create_trigger(stmt)
+        elif isinstance(stmt, DropTriggerStatement):
+            return self._analyze_drop_trigger(stmt)
         else:
             # 其他语句暂不做语义分析
             return AnalyzedResult(stmt)
@@ -260,3 +266,26 @@ class SemanticAnalyzer:
         return AnalyzedResult(stmt)
 
     # 你可以按需为索引、视图、用户等类似扩展 
+    
+    def _analyze_create_trigger(self, stmt: CreateTriggerStatement) -> AnalyzedResult:
+        """分析CREATE TRIGGER语句"""
+        # 检查表是否存在
+        schema = self.catalog.get_table_schema(stmt.table_name)
+        if not schema:
+            raise SemanticError(f"表 {stmt.table_name} 不存在")
+        
+        # 检查事件是否合法
+        if stmt.event not in ('INSERT', 'UPDATE', 'DELETE'):
+            raise SemanticError(f"不支持的事件类型: {stmt.event}")
+            
+        # 检查时机是否合法
+        if stmt.timing not in ('BEFORE', 'AFTER'):
+            raise SemanticError(f"不支持的触发时机: {stmt.timing}")
+        
+        # 触发器体的语义分析在执行阶段进行（因为可能引用当前表）
+        return AnalyzedResult(stmt)
+
+    def _analyze_drop_trigger(self, stmt: DropTriggerStatement) -> AnalyzedResult:
+        """分析DROP TRIGGER语句"""
+        # 基本校验，实际的触发器存在性检查在执行阶段进行
+        return AnalyzedResult(stmt)

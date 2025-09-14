@@ -91,6 +91,14 @@ class TokenType(Enum):
     # 新增：IF EXISTS 支持
     IF = "IF"
     EXISTS = "EXISTS"
+    # 触发器关键字
+    TRIGGER = "TRIGGER"
+    BEFORE = "BEFORE"
+    AFTER = "AFTER"
+    FOR = "FOR"
+    EACH = "EACH"
+    ROW = "ROW"
+    EVENT = "EVENT"
 
     # 布尔值
     TRUE = "TRUE"
@@ -213,6 +221,14 @@ class SQLLexer:
         # 新增：IF EXISTS 支持
         "IF": TokenType.IF,
         "EXISTS": TokenType.EXISTS,
+        # 触发器关键字
+        "TRIGGER": TokenType.TRIGGER,
+        "BEFORE": TokenType.BEFORE,
+        "AFTER": TokenType.AFTER,
+        "FOR": TokenType.FOR,
+        "EACH": TokenType.EACH,
+        "ROW": TokenType.ROW,
+        "EVENT": TokenType.EVENT,
     }
 
     def __init__(self, sql: str):

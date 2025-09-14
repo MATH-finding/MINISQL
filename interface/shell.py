@@ -40,7 +40,7 @@ if HAS_PT:
                 "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "CREATE", "TABLE",
                 "UPDATE", "DELETE", "DROP", "TRUNCATE", "JOIN", "INNER", "LEFT", "RIGHT",
                 "ON", "GROUP", "BY", "ORDER", "ASC", "DESC", "INDEX", "UNIQUE", "VIEW", "AS",
-                "COUNT", "SUM", "AVG", "MIN", "MAX",
+                "COUNT", "SUM", "AVG", "MIN", "MAX", "TRIGGER", "BEFORE", "AFTER", "FOR", "EACH", "ROW",
             ]
 
         def get_completions(self, document: 'Document', complete_event):
@@ -94,8 +94,8 @@ if HAS_PT:
         def __init__(self, database: SimpleDatabase):
             self.db = database
             self.seed_words = [
-                "help", "tables", "views", "stats", "indexes", "describe ", "show ",
-                "CREATE TABLE ", "SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM ",
+                "help", "tables", "views", "triggers", "stats", "indexes", "describe ", "show ",
+                "CREATE TABLE ", "CREATE TRIGGER ", "SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM ",
             ]
 
         def get_suggestion(self, buffer, document: 'Document'):
@@ -300,6 +300,29 @@ class SQLShell:
         if command.lower().startswith("drop view "):
             view_name = command.split()[2]
             result = self.database.execute_sql(f"DROP VIEW {view_name}")
+            format_query_result(result)
+            return
+
+        # 触发器管理命令
+        if command.lower() in ("triggers", "show triggers"):
+            self._show_triggers()
+            return
+
+        if command.lower().startswith("describe trigger "):
+            trigger_name = command.split()[2]
+            self._describe_trigger(trigger_name)
+            return
+
+        if command.lower().startswith("show trigger "):
+            parts = command.split()
+            if len(parts) >= 3:
+                alias = f"describe trigger {parts[2]}"
+                self._process_command(alias)
+                return
+
+        if command.lower().startswith("drop trigger "):
+            trigger_name = command.split()[2]
+            result = self.database.execute_sql(f"DROP TRIGGER {trigger_name};")
             format_query_result(result)
             return
 
@@ -849,6 +872,10 @@ CREATE INDEX index_name ON table_name (column)       - 创建索引
 CREATE UNIQUE INDEX idx_name ON table_name (column)  - 创建唯一索引
 DROP INDEX index_name                                - 删除索引
 
+⚡ 触发器操作:
+CREATE TRIGGER name BEFORE|AFTER INSERT|UPDATE|DELETE ON table FOR EACH ROW statement - 创建触发器
+DROP TRIGGER trigger_name [IF EXISTS]                                                 - 删除触发器
+
 📊 系统命令:
 tables                     - 列出所有表
 describe <table>           - 查看表结构 (可简写为 desc)
@@ -858,6 +885,9 @@ stats                      - 显示数据库统计信息
 views | show views         - 列出所有视图
 describe view <name>       - 查看视图定义
 show view <name>           - 别名，与上等价
+triggers | show triggers   - 列出所有触发器
+describe trigger <name>    - 查看触发器详细信息
+show trigger <name>        - 别名，与上等价
 
 📝 日志命令:
 log level <LEVEL>          - 设置日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
@@ -976,6 +1006,42 @@ cache stats                          -- 查看缓存详情
         """显示数据库统计信息"""
         stats = self.database.get_database_stats()
         format_database_stats(stats)
+
+    def _show_triggers(self):
+        """显示所有触发器"""
+        try:
+            triggers = self.database.executor.catalog.list_triggers()
+            if not triggers:
+                print("数据库中没有触发器")
+            else:
+                print(f"数据库中的触发器 ({len(triggers)} 个):")
+                for trigger in triggers:
+                    print(f"  ⚡ {trigger['name']} ({trigger['timing']} {trigger['event']} ON {trigger['table_name']})")
+        except Exception as e:
+            print(f"❌ 获取触发器列表失败: {e}")
+
+    def _describe_trigger(self, trigger_name: str):
+        """显示触发器详细信息"""
+        try:
+            trigger = self.database.executor.catalog.get_trigger(trigger_name)
+            if not trigger:
+                print(f"触发器 '{trigger_name}' 不存在")
+                return
+
+            print(f"触发器 '{trigger_name}' 详细信息:")
+            print(f"  名称: {trigger['name']}")
+            print(f"  时机: {trigger['timing']}")
+            print(f"  事件: {trigger['event']}")
+            print(f"  表名: {trigger['table_name']}")
+            print(f"  触发器体: {trigger['statement']}")
+            
+            # 如果有创建时间，显示创建时间
+            if 'created_at' in trigger:
+                import datetime
+                created_time = datetime.datetime.fromtimestamp(trigger['created_at'])
+                print(f"  创建时间: {created_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            print(f"❌ 获取触发器信息失败: {e}")
 
 
 def interactive_sql_shell(database: SimpleDatabase):

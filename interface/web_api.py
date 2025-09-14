@@ -1696,6 +1696,139 @@ class DatabaseWebAPI:
                     'message': f'获取统计信息失败: {str(e)}'
                 }), 500
 
+        @self.app.route('/api/triggers', methods=['GET'])
+        def list_triggers():
+            """获取触发器列表"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+
+                # 调用SQL执行器获取触发器列表
+                triggers = db.executor.catalog.list_triggers()
+
+                return jsonify({
+                    'success': True,
+                    'data': triggers,
+                    'total': len(triggers)
+                })
+
+            except Exception as e:
+                logger.error(f"获取触发器列表时发生错误: {str(e)}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': '获取触发器列表失败'
+                }), 500
+
+        @self.app.route('/api/triggers', methods=['POST'])
+        def create_trigger():
+            """创建触发器"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({
+                        'success': False,
+                        'message': '请求数据不能为空'
+                    }), 400
+
+                # 验证必需字段
+                required_fields = ['trigger_name', 'timing', 'event', 'table_name', 'statement']
+                for field in required_fields:
+                    if field not in data:
+                        return jsonify({
+                            'success': False,
+                            'message': f'缺少必需字段: {field}'
+                        }), 400
+
+                # 构造CREATE TRIGGER SQL
+                sql = f"""CREATE TRIGGER {data['trigger_name']} 
+                         {data['timing']} {data['event']} 
+                         ON {data['table_name']} 
+                         FOR EACH ROW {data['statement']};"""
+
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql(sql)
+
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"创建触发器时发生错误: {str(e)}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': '创建触发器失败'
+                }), 500
+
+        @self.app.route('/api/triggers/<trigger_name>', methods=['DELETE'])
+        def drop_trigger(trigger_name: str):
+            """删除触发器"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                # 获取查询参数
+                if_exists = request.args.get('if_exists', 'false').lower() == 'true'
+
+                # 构造DROP TRIGGER SQL
+                if_exists_clause = " IF EXISTS" if if_exists else ""
+                sql = f"DROP TRIGGER{if_exists_clause} {trigger_name};"
+
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql(sql)
+
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"删除触发器时发生错误: {str(e)}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': '删除触发器失败'
+                }), 500
+
+        @self.app.route('/api/triggers/<trigger_name>', methods=['GET'])
+        def get_trigger_info(trigger_name: str):
+            """获取触发器详细信息"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+
+                # 获取特定触发器信息
+                trigger = db.executor.catalog.get_trigger(trigger_name)
+                if not trigger:
+                    return jsonify({
+                        'success': False,
+                        'message': f'触发器 {trigger_name} 不存在'
+                    }), 404
+
+                return jsonify({
+                    'success': True,
+                    'data': trigger
+                })
+
+            except Exception as e:
+                logger.error(f"获取触发器信息时发生错误: {str(e)}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': '获取触发器信息失败'
+                }), 500
+
     def _format_select_for_web(self, data: list) -> dict:
         """将SELECT结果格式化为适合前端展示的格式"""
         if not data:
