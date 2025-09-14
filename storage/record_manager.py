@@ -81,6 +81,7 @@ class RecordManager:
             page.write_int(0, record_count + 1)
             page.write_int(4, free_space_offset + 4 + record_size)
 
+            print(f"[DEBUG] 插入记录到页面{page_id}，记录数据: {record.data}")
             return True
 
         except Exception as e:
