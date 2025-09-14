@@ -100,7 +100,7 @@ simple_database/
 │   └── btree.py             # B+树索引实现 (新增)
 ├── catalog/                  # 系统目录层
 │   ├── __init__.py
-│   ├── column_definition.py  # 列定义
+│   ├── data_types.py  # 列定义
 │   ├── table_schema.py       # 表结构定义
 │   ├── system_catalog.py     # 系统目录管理
 │   └── index_manager.py      # 索引管理器 (新增)
@@ -113,13 +113,14 @@ simple_database/
 │   ├── parser.py            # 语法分析
 │   ├── ast_nodes.py         # AST节点定义
 │   └── executor.py          # SQL执行器
+│   ├── semantic.py          # 语义分析
+│   └──diagnostics.py        # 智能纠错
 └── interface/                # 接口层
     ├── __init__.py
     ├── database.py          # 数据库主接口
     ├── shell.py             # 交互式Shell
     └── formatter.py         # 结果格式化
 │   ├── web_api.py          # 新增：Flask Web API
-
 └── db_logging/                  
     ├── __init__.py
     ├── logger.py            # 核心日志器
