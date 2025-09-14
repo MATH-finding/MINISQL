@@ -2,6 +2,8 @@
 from interface.database import SimpleDatabase
 
 
+
+
 def run(db, sess, sql):
     db.use_session(sess)
     res = db.execute_sql(sql)
@@ -103,11 +105,10 @@ def test_delete_commit_and_rollback(db):
 if __name__ == "__main__":
     db_path = os.path.join(os.path.dirname(__file__), "database.db")
     db = SimpleDatabase(db_path)
+    
     try:
         # 登录数据库
-        if not login_db(db):
-            print("登录失败，退出测试")
-            exit(1)
+        db.login('admin', 'admin123')
         
         test_insert_commit_and_rollback(db)
         test_update_commit_and_rollback(db)
