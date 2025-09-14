@@ -430,3 +430,20 @@ class DropTriggerStatement(Statement):
     def __repr__(self):
         flag = " IF EXISTS" if self.if_exists else ""
         return f"DROP TRIGGER{flag} {self.trigger_name}"
+
+
+# ALTER TABLE 相关
+class AlterTableStatement(Statement):
+    """ALTER TABLE 语句"""
+    def __init__(self, table_name: str, action: str, column_def: dict = None, column_name: str = None):
+        self.table_name = table_name
+        self.action = action  # 'ADD' 或 'DROP'
+        self.column_def = column_def  # dict, 仅ADD时有
+        self.column_name = column_name  # str, 仅DROP时有
+    def __repr__(self):
+        if self.action == 'ADD':
+            return f"ALTER TABLE {self.table_name} ADD COLUMN {self.column_def}"
+        elif self.action == 'DROP':
+            return f"ALTER TABLE {self.table_name} DROP COLUMN {self.column_name}"
+        else:
+            return f"ALTER TABLE {self.table_name} <UNKNOWN ACTION>"

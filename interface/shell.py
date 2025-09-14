@@ -541,6 +541,8 @@ class SQLShell:
             """
             📋 SQL语句:
             CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+            ALTER TABLE table_name ADD COLUMN col type           - 添加列
+            ALTER TABLE table_name DROP COLUMN col               - 删除列
             INSERT INTO table_name VALUES (val1, val2, ...)      - 插入数据
             SELECT columns FROM table_name [WHERE condition]     - 查询数据
             [JOIN ... ON ...]、聚合 COUNT/SUM/AVG/MIN/MAX        - 进阶查询

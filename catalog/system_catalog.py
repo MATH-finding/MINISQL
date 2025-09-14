@@ -346,3 +346,25 @@ class SystemCatalog:
     def get_trigger(self, trigger_name: str) -> Optional[Dict]:
         """获取特定触发器"""
         return self.triggers.get(trigger_name)
+
+    def add_column(self, table_name, column):
+        schema = self.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+        # 检查列名重复
+        if any(c.name == column.name for c in schema.columns):
+            raise ValueError(f"列 {column.name} 已存在于表 {table_name}")
+        schema.columns.append(column)
+        # 可选：更新表数据文件，给每条记录补NULL（略，最小实现只改元数据）
+        self._save_catalog()
+
+    def drop_column(self, table_name, column_name):
+        schema = self.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+        # 检查列存在
+        if not any(c.name == column_name for c in schema.columns):
+            raise ValueError(f"列 {column_name} 不存在于表 {table_name}")
+        schema.columns = [c for c in schema.columns if c.name != column_name]
+        # 可选：更新表数据文件，删除该列（略，最小实现只改元数据）
+        self._save_catalog()

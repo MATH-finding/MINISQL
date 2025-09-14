@@ -99,6 +99,9 @@ class TokenType(Enum):
     EACH = "EACH"
     ROW = "ROW"
     EVENT = "EVENT"
+    ALTER = "ALTER"
+    ADD = "ADD"
+    COLUMN = "COLUMN"
 
     # 布尔值
     TRUE = "TRUE"
@@ -229,6 +232,9 @@ class SQLLexer:
         "EACH": TokenType.EACH,
         "ROW": TokenType.ROW,
         "EVENT": TokenType.EVENT,
+        "ALTER": TokenType.ALTER,
+        "ADD": TokenType.ADD,
+        "COLUMN": TokenType.COLUMN,
     }
 
     def __init__(self, sql: str):

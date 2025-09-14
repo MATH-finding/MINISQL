@@ -271,6 +271,9 @@ class SQLExecutor:
                 result = self._execute_create_trigger(ast)
             elif isinstance(ast, DropTriggerStatement):
                 result = self._execute_drop_trigger(ast)
+            # ALTER TABLE
+            elif isinstance(ast, AlterTableStatement):
+                result = self._execute_alter_table(ast)
             # 数据操作语句
             elif isinstance(ast, UpdateStatement):
                 result = self._execute_update_with_undo(ast)
@@ -1754,3 +1757,43 @@ class SQLExecutor:
                 print(f"警告: 触发器 {trigger['name']} 执行异常: {str(e)}")
         
         return results
+
+    def _execute_alter_table(self, stmt):
+        """执行ALTER TABLE ADD/DROP COLUMN"""
+        if stmt.action == 'ADD':
+            # 需要将dict转为ColumnDefinition
+            from catalog import ColumnDefinition, DataType
+            col_def = stmt.column_def
+            data_type_map = {
+                "INTEGER": DataType.INTEGER,
+                "VARCHAR": DataType.VARCHAR,
+                "FLOAT": DataType.FLOAT,
+                "BOOLEAN": DataType.BOOLEAN,
+                "CHAR": DataType.CHAR,
+                "DECIMAL": DataType.DECIMAL,
+                "DATE": DataType.DATE,
+                "TIME": DataType.TIME,
+                "DATETIME": DataType.DATETIME,
+                "BIGINT": DataType.BIGINT,
+                "TINYINT": DataType.TINYINT,
+                "TEXT": DataType.TEXT,
+            }
+            data_type = data_type_map.get(col_def["type"])
+            column = ColumnDefinition(
+                name=col_def["name"],
+                data_type=data_type,
+                max_length=col_def["length"],
+                nullable=True if "NULL" in col_def.get("constraints", []) else False,
+                primary_key="PRIMARY KEY" in col_def.get("constraints", []),
+                unique="UNIQUE" in col_def.get("constraints", []),
+                default=col_def.get("default"),
+                check=col_def.get("check"),
+                foreign_key=col_def.get("foreign_key"),
+            )
+            self.catalog.add_column(stmt.table_name, column)
+            return {"type": "ALTER_TABLE", "success": True, "message": f"表 {stmt.table_name} 添加列 {column.name} 成功"}
+        elif stmt.action == 'DROP':
+            self.catalog.drop_column(stmt.table_name, stmt.column_name)
+            return {"type": "ALTER_TABLE", "success": True, "message": f"表 {stmt.table_name} 删除列 {stmt.column_name} 成功"}
+        else:
+            return {"type": "ALTER_TABLE", "success": False, "message": f"不支持的ALTER操作: {stmt.action}"}

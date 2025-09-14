@@ -86,6 +86,8 @@ class SQLParser:
             return self._parse_set()
         elif self.current_token.type == TokenType.TRUNCATE:
             return self._parse_truncate()
+        elif self.current_token.type == TokenType.ALTER:
+            return self._parse_alter_table()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
 
@@ -953,3 +955,20 @@ class SQLParser:
         trigger_name = self._expect(TokenType.IDENTIFIER).value
         
         return DropTriggerStatement(trigger_name, if_exists)
+
+    def _parse_alter_table(self):
+        self._expect(TokenType.ALTER)
+        self._expect(TokenType.TABLE)
+        table_name = self._expect(TokenType.IDENTIFIER).value
+        if self.current_token.type == TokenType.ADD:
+            self._advance()
+            self._expect(TokenType.COLUMN)
+            col_def = self._parse_column_definition()
+            return AlterTableStatement(table_name, 'ADD', column_def=col_def)
+        elif self.current_token.type == TokenType.DROP:
+            self._advance()
+            self._expect(TokenType.COLUMN)
+            col_name = self._expect(TokenType.IDENTIFIER).value
+            return AlterTableStatement(table_name, 'DROP', column_name=col_name)
+        else:
+            raise SyntaxError(f"ALTER TABLE 仅支持 ADD COLUMN 或 DROP COLUMN, 得到 {self.current_token.value}")
