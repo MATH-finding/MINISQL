@@ -29,6 +29,8 @@ class DatabaseWebAPI:
         # 保存文件路径并创建单一数据库连接
         self.default_db_file = db_file  # 添加这行
         self.db = SimpleDatabase(self.default_db_file)
+        # 添加执行器引用以支持游标操作
+        self.executor = self.db.executor
 
         self._setup_routes()
 

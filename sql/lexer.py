@@ -125,6 +125,7 @@ class TokenType(Enum):
     SEMICOLON = ";"  # 仅英文分号;被识别为语句结束符，中文分号；不被识别
     LEFT_PAREN = "("
     RIGHT_PAREN = ")"
+    BACKSLASH = "\\"
 
     # 特殊
     WHITESPACE = "WHITESPACE"
@@ -288,6 +289,9 @@ class SQLLexer:
                 self._add_single_char_token(TokenType.STAR, char)
             elif char == ".":
                 self._read_dot()
+            elif char == "\\":
+                # 处理反斜杠：可能是转义字符或路径分隔符
+                self._read_backslash()
             else:
                 raise SyntaxError(
                     f"未识别的字符 '{char}' 在行 {self.line}, 列 {self.column}"
@@ -456,6 +460,10 @@ class SQLLexer:
         """添加Token（不移动位置）"""
         token = Token(token_type, value, self.line, self.column)
         self.tokens.append(token)
+
+    def _read_backslash(self):
+        """处理反斜杠字符"""
+        self._add_single_char_token(TokenType.BACKSLASH, "\\")
 
     def _add_single_char_token(self, token_type: TokenType, char: str):
         """添加单字符Token并移动位置"""
