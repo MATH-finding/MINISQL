@@ -1,4 +1,4 @@
-﻿import os
+import os
 from interface.database import SimpleDatabase
 
 
@@ -7,17 +7,6 @@ def run(db, sess, sql):
     res = db.execute_sql(sql)
     print(f"[S{sess}] SQL> {sql}\n      -> {res}")
     return res
-
-
-def login_db(db):
-    """登录数据库"""
-    result = db.login("admin", "admin123")
-    if result["success"]:
-        print(f" {result['message']}")
-        return True
-    else:
-        print(f" {result['message']}")
-        return False
 
 
 def reset_and_seed(db, table_name):
@@ -104,14 +93,11 @@ if __name__ == "__main__":
     db_path = os.path.join(os.path.dirname(__file__), "database.db")
     db = SimpleDatabase(db_path)
     try:
-        # 登录数据库
-        if not login_db(db):
-            print("登录失败，退出测试")
-            exit(1)
-        
         test_insert_commit_and_rollback(db)
         test_update_commit_and_rollback(db)
         test_delete_commit_and_rollback(db)
         print("\n基本事务/会话测试通过（未显式设置隔离级别）！")
     finally:
         db.close()
+
+
