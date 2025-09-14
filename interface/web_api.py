@@ -78,347 +78,708 @@ class DatabaseWebAPI:
         def index():
             """首页 - 数据库管理界面"""
             return '''<!DOCTYPE html>
-        <html lang="zh-CN">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>MiniSQL 数据库管理系统</title>
-            <style>
-                * {
-                    margin: 0;
-                    padding: 0;
-                    box-sizing: border-box;
-                }
-
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    min-height: 100vh;
-                    color: #333;
-                }
-
-                .container {
-                    max-width: 1200px;
-                    margin: 0 auto;
-                    padding: 20px;
-                }
-
-                .header {
-                    text-align: center;
-                    color: white;
-                    margin-bottom: 30px;
-                }
-
-                .card {
-                    background: white;
-                    border-radius: 12px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-                    padding: 25px;
-                    margin-bottom: 20px;
-                }
-
-                .login-card {
-                    max-width: 400px;
-                    margin: 50px auto;
-                }
-
-                .main-interface {
-                    display: none;
-                }
-
-                .form-group {
-                    margin-bottom: 20px;
-                }
-
-                label {
-                    display: block;
-                    margin-bottom: 8px;
-                    font-weight: 500;
-                    color: #555;
-                }
-
-                input, textarea, select {
-                    width: 100%;
-                    padding: 12px;
-                    border: 2px solid #e1e5e9;
-                    border-radius: 8px;
-                    font-size: 14px;
-                    transition: border-color 0.3s;
-                }
-
-                input:focus, textarea:focus, select:focus {
-                    outline: none;
-                    border-color: #667eea;
-                }
-
-                .btn {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                    border: none;
-                    padding: 12px 24px;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 500;
-                    transition: transform 0.2s;
-                    margin-right: 10px;
-                }
-
-                .btn:hover {
-                    transform: translateY(-2px);
-                }
-
-                .btn-secondary {
-                    background: #6c757d;
-                }
-
-                .btn-danger {
-                    background: #dc3545;
-                }
-
-                .tabs {
-                    display: flex;
-                    border-bottom: 2px solid #e1e5e9;
-                    margin-bottom: 20px;
-                }
-
-                .tab {
-                    padding: 12px 20px;
-                    cursor: pointer;
-                    border-bottom: 2px solid transparent;
-                    transition: all 0.3s;
-                }
-
-                .tab.active {
-                    border-bottom-color: #667eea;
-                    color: #667eea;
-                    font-weight: 500;
-                }
-
-                .tab-content {
-                    display: none;
-                }
-
-                .tab-content.active {
-                    display: block;
-                }
-
-                .sql-editor {
-                    height: 200px;
-                    font-family: 'Courier New', monospace;
-                    font-size: 14px;
-                    resize: vertical;
-                }
-
-                .result-table {
-                    overflow-x: auto;
-                }
-
-                table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin-top: 15px;
-                }
-
-                th, td {
-                    padding: 12px;
-                    text-align: left;
-                    border-bottom: 1px solid #e1e5e9;
-                }
-
-                th {
-                    background: #f8f9fa;
-                    font-weight: 600;
-                }
-
-                tr:hover {
-                    background: #f8f9fa;
-                }
-
-                .alert {
-                    padding: 12px 16px;
-                    border-radius: 8px;
-                    margin: 10px 0;
-                }
-
-                .alert-success {
-                    background: #d4edda;
-                    color: #155724;
-                    border: 1px solid #c3e6cb;
-                }
-
-                .alert-error {
-                    background: #f8d7da;
-                    color: #721c24;
-                    border: 1px solid #f5c6cb;
-                }
-
-                .user-info {
-                    float: right;
-                    color: white;
-                }
-
-                .sidebar {
-                    position: fixed;
-                    left: -250px;
-                    top: 0;
-                    width: 250px;
-                    height: 100vh;
-                    background: #2c3e50;
-                    transition: left 0.3s;
-                    z-index: 1000;
-                    padding: 20px;
-                }
-
-                .sidebar.open {
-                    left: 0;
-                }
-
-                .sidebar h3 {
-                    color: white;
-                    margin-bottom: 20px;
-                }
-
-                .sidebar ul {
-                    list-style: none;
-                }
-
-                .sidebar li {
-                    margin-bottom: 10px;
-                    cursor: pointer;
-                    color: #bdc3c7;
-                    padding: 8px;
-                    border-radius: 4px;
-                    transition: background 0.3s;
-                }
-
-                .sidebar li:hover {
-                    background: #34495e;
-                    color: white;
-                }
-
-                .menu-btn {
-                    position: fixed;
-                    top: 20px;
-                    left: 20px;
-                    z-index: 1001;
-                    background: rgba(255,255,255,0.2);
-                    color: white;
-                    border: none;
-                    padding: 10px;
-                    border-radius: 50%;
-                    cursor: pointer;
-                }
-            </style>
-        </head>
-        <body>
-            <button class="menu-btn" onclick="toggleSidebar()">☰</button>
-
-            <div class="sidebar" id="sidebar">
-                <h3>数据库管理</h3>
-                    <ul>
-                        <li onclick="showTab('sql-tab')">SQL 查询</li>
-                        <li onclick="showTab('tables-tab')">表管理</li>
-                        <li onclick="showTab('views-tab')">视图管理</li>
-                        <li onclick="showTab('indexes-tab')">索引管理</li>
-                        <li onclick="showTab('stats-tab')">统计信息</li>
-                        <li onclick="logout()" style="color: #e74c3c;">退出登录</li>
-                    </ul>
-            </div>
-
-            <div class="container">
-                <!-- 登录界面 -->
-                <div id="login-interface">
-                    <div class="header">
-                        <h1>🗄️ MiniSQL 数据库管理系统</h1>
-                        <p>请登录以继续使用</p>
-                    </div>
-
-                    <div class="card login-card">
-                        <h2 style="text-align: center; margin-bottom: 25px;">用户登录</h2>
-
-                        <div class="form-group">
-                            <label for="username">用户名</label>
-                            <input type="text" id="username" placeholder="请输入用户名">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="password">密码</label>
-                            <input type="password" id="password" placeholder="请输入密码">
-                        </div>
-
-                        <button class="btn" onclick="login()" style="width: 100%;">登录</button>
-
-                        <div id="login-message"></div>
-
-                        <hr style="margin: 20px 0;">
-                        <p style="text-align: center; font-size: 12px; color: #666;">
-                            首次使用？请使用 SQL 查询创建用户：<br>
-                            <code>CREATE USER admin IDENTIFIED BY 'password'</code>
-                        </p>
-                    </div>
-                </div>
-
-                <!-- 主界面 -->
-                <div id="main-interface" class="main-interface">
-                    <div class="header">
-                        <h1>🗄️ MiniSQL 数据库管理系统</h1>
-                        <div class="user-info">
-                            欢迎，<span id="current-user">用户</span>
-                        </div>
-                        <div style="clear: both;"></div>
-                    </div>
-
-                    <div class="card">
-                        <div class="tabs">
-                            <div class="tab active" onclick="showTab('sql-tab')">SQL 查询</div>
-                            <div class="tab" onclick="showTab('tables-tab')">表管理</div>
-                            <div class="tab" onclick="showTab('views-tab')">视图管理</div>
-                            <div class="tab" onclick="showTab('indexes-tab')">索引管理</div>
-                            <div class="tab" onclick="showTab('stats-tab')">统计信息</div>
-                        </div>
-
-
-                        <!-- SQL 查询标签页 -->
-                        <div id="sql-tab" class="tab-content active">
-                            <div class="form-group">
-                                <label for="sql-input">SQL 语句</label>
-                                <textarea id="sql-input" class="sql-editor" placeholder="请输入 SQL 语句..."></textarea>
-                            </div>
-
-                            <button class="btn" onclick="executeSql()">执行</button>
-                            <button class="btn btn-secondary" onclick="clearSql()">清空</button>
-
-                            <div id="sql-result"></div>
-                        </div>
-
-                        <!-- 表管理标签页 -->
-                        <div id="tables-tab" class="tab-content">
-                            <button class="btn" onclick="loadTables()">刷新表列表</button>
-                            <div id="tables-result"></div>
-                        </div>
-
-                        <!-- 索引管理标签页 -->
-                        <div id="indexes-tab" class="tab-content">
-                            <button class="btn" onclick="loadIndexes()">刷新索引列表</button>
-                            <div id="indexes-result"></div>
-                        </div>
-
-                        <!-- 统计信息标签页 -->
-                        <div id="stats-tab" class="tab-content">
-                            <button class="btn" onclick="loadStats()">刷新统计信息</button>
-                            <div id="stats-result"></div>
-                        </div>
+            <html lang="zh-CN">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>MiniSQL Enterprise Database Management</title>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+                <style>
+                    :root {
+                        --primary-color: #2563eb;
+                        --primary-dark: #1d4ed8;
+                        --secondary-color: #64748b;
+                        --success-color: #059669;
+                        --error-color: #dc2626;
+                        --warning-color: #d97706;
+                        --neutral-50: #f8fafc;
+                        --neutral-100: #f1f5f9;
+                        --neutral-200: #e2e8f0;
+                        --neutral-300: #cbd5e1;
+                        --neutral-400: #94a3b8;
+                        --neutral-500: #64748b;
+                        --neutral-600: #475569;
+                        --neutral-700: #334155;
+                        --neutral-800: #1e293b;
+                        --neutral-900: #0f172a;
+                        --border-radius: 8px;
+                        --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+                        --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+                        --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+                        --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+                    }
+            
+                    * {
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
+                    }
+            
+                    body {
+                        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        min-height: 100vh;
+                        color: var(--neutral-700);
+                        font-size: 14px;
+                        line-height: 1.5;
+                    }
+            
+                    .container {
+                        max-width: 1400px;
+                        margin: 0 auto;
+                        padding: 20px;
+                    }
+            
+                    .header {
+                        text-align: center;
+                        color: white;
+                        margin-bottom: 40px;
+                    }
+            
+                    .header h1 {
+                        font-size: 2.5rem;
+                        font-weight: 700;
+                        margin-bottom: 8px;
+                        letter-spacing: -0.025em;
+                    }
+            
+                    .header p {
+                        font-size: 1.125rem;
+                        opacity: 0.9;
+                        font-weight: 400;
+                    }
+            
+                    .card {
+                        background: white;
+                        border-radius: 16px;
+                        box-shadow: var(--shadow-xl);
+                        border: 1px solid rgba(255, 255, 255, 0.1);
+                        backdrop-filter: blur(10px);
+                        overflow: hidden;
+                    }
+            
+                    .login-card {
+                        max-width: 400px;
+                        margin: 50px auto;
+                        padding: 40px;
+                    }
+            
+                    .main-interface {
+                        display: none;
+                    }
+            
+                    .form-group {
+                        margin-bottom: 24px;
+                    }
+            
+                    label {
+                        display: block;
+                        margin-bottom: 8px;
+                        font-weight: 500;
+                        color: var(--neutral-700);
+                        font-size: 14px;
+                    }
+            
+                    input, textarea, select {
+                        width: 100%;
+                        padding: 12px 16px;
+                        border: 1px solid var(--neutral-300);
+                        border-radius: var(--border-radius);
+                        font-size: 14px;
+                        font-family: inherit;
+                        transition: all 0.15s ease;
+                        background: white;
+                    }
+            
+                    input:focus, textarea:focus, select:focus {
+                        outline: none;
+                        border-color: var(--primary-color);
+                        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+                    }
+            
+                    .btn {
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        background: var(--primary-color);
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        border-radius: var(--border-radius);
+                        cursor: pointer;
+                        font-size: 14px;
+                        font-weight: 500;
+                        font-family: inherit;
+                        transition: all 0.15s ease;
+                        margin-right: 8px;
+                        text-decoration: none;
+                        min-height: 40px;
+                    }
+            
+                    .btn:hover {
+                        background: var(--primary-dark);
+                        transform: translateY(-1px);
+                        box-shadow: var(--shadow-md);
+                    }
+            
+                    .btn:active {
+                        transform: translateY(0);
+                    }
+            
+                    .btn-secondary {
+                        background: var(--neutral-500);
+                    }
+            
+                    .btn-secondary:hover {
+                        background: var(--neutral-600);
+                    }
+            
+                    .btn-danger {
+                        background: var(--error-color);
+                    }
+            
+                    .btn-danger:hover {
+                        background: #b91c1c;
+                    }
+            
+                    .btn-sm {
+                        padding: 8px 16px;
+                        font-size: 13px;
+                        min-height: 32px;
+                    }
+            
+                    .tabs {
+                        display: flex;
+                        border-bottom: 1px solid var(--neutral-200);
+                        background: var(--neutral-50);
+                        border-radius: 12px 12px 0 0;
+                        padding: 0 8px;
+                    }
+            
+                    .tab {
+                        padding: 16px 24px;
+                        cursor: pointer;
+                        border-bottom: 2px solid transparent;
+                        transition: all 0.15s ease;
+                        font-weight: 500;
+                        color: var(--neutral-600);
+                        border-radius: 8px 8px 0 0;
+                        margin: 8px 4px 0 4px;
+                        position: relative;
+                    }
+            
+                    .tab.active {
+                        background: white;
+                        color: var(--primary-color);
+                        border-bottom-color: var(--primary-color);
+                        box-shadow: var(--shadow-sm);
+                    }
+            
+                    .tab:hover:not(.active) {
+                        background: rgba(37, 99, 235, 0.05);
+                        color: var(--primary-color);
+                    }
+            
+                    .tab-content {
+                        display: none;
+                        padding: 32px;
+                    }
+            
+                    .tab-content.active {
+                        display: block;
+                    }
+            
+                    .sql-editor {
+                        height: 200px;
+                        font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+                        font-size: 14px;
+                        resize: vertical;
+                        line-height: 1.5;
+                        background: var(--neutral-50);
+                        border: 1px solid var(--neutral-200);
+                    }
+            
+                    .result-table {
+                        overflow-x: auto;
+                        border-radius: var(--border-radius);
+                        border: 1px solid var(--neutral-200);
+                        margin-top: 20px;
+                    }
+            
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        background: white;
+                    }
+            
+                    th, td {
+                        padding: 16px 20px;
+                        text-align: left;
+                        border-bottom: 1px solid var(--neutral-100);
+                        font-size: 14px;
+                    }
+            
+                    th {
+                        background: var(--neutral-50);
+                        font-weight: 600;
+                        color: var(--neutral-700);
+                        font-size: 13px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.025em;
+                    }
+            
+                    tr:hover {
+                        background: var(--neutral-50);
+                    }
+            
+                    .alert {
+                        padding: 16px 20px;
+                        border-radius: var(--border-radius);
+                        margin: 16px 0;
+                        font-size: 14px;
+                        border: 1px solid;
+                    }
+            
+                    .alert-success {
+                        background: #f0fdf4;
+                        color: var(--success-color);
+                        border-color: #bbf7d0;
+                    }
+            
+                    .alert-error {
+                        background: #fef2f2;
+                        color: var(--error-color);
+                        border-color: #fecaca;
+                    }
+            
+                    .alert-info {
+                        background: #eff6ff;
+                        color: var(--primary-color);
+                        border-color: #bfdbfe;
+                    }
+            
+                    .user-info {
+                        float: right;
+                        color: white;
+                        font-weight: 500;
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                    }
+            
+                    .user-avatar {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 50%;
+                        background: rgba(255, 255, 255, 0.2);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-weight: 600;
+                        font-size: 14px;
+                    }
+            
+                    .sidebar {
+                        position: fixed;
+                        left: -280px;
+                        top: 0;
+                        width: 280px;
+                        height: 100vh;
+                        background: var(--neutral-900);
+                        transition: left 0.3s ease;
+                        z-index: 1000;
+                        padding: 0;
+                        border-right: 1px solid var(--neutral-800);
+                        box-shadow: var(--shadow-xl);
+                    }
+            
+                    .sidebar.open {
+                        left: 0;
+                    }
+            
+                    .sidebar-header {
+                        padding: 24px;
+                        border-bottom: 1px solid var(--neutral-800);
+                        background: var(--neutral-800);
+                    }
+            
+                    .sidebar h3 {
+                        color: white;
+                        font-size: 18px;
+                        font-weight: 600;
+                        margin: 0;
+                    }
+            
+                    .sidebar-nav {
+                        padding: 16px 0;
+                    }
+            
+                    .sidebar ul {
+                        list-style: none;
+                    }
+            
+                    .sidebar li {
+                        margin: 2px 16px;
+                        cursor: pointer;
+                        color: var(--neutral-400);
+                        padding: 12px 16px;
+                        border-radius: var(--border-radius);
+                        transition: all 0.15s ease;
+                        font-weight: 500;
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                        font-size: 14px;
+                    }
+            
+                    .sidebar li:hover {
+                        background: var(--neutral-800);
+                        color: white;
+                    }
+            
+                    .sidebar li.danger {
+                        color: #f87171;
+                    }
+            
+                    .sidebar li.danger:hover {
+                        background: rgba(220, 38, 38, 0.1);
+                        color: #ef4444;
+                    }
+            
+                    .menu-btn {
+                        position: fixed;
+                        top: 24px;
+                        left: 24px;
+                        z-index: 1001;
+                        background: rgba(0, 0, 0, 0.1);
+                        backdrop-filter: blur(10px);
+                        color: white;
+                        border: 1px solid rgba(255, 255, 255, 0.1);
+                        padding: 12px;
+                        border-radius: 12px;
+                        cursor: pointer;
+                        transition: all 0.15s ease;
+                        width: 48px;
+                        height: 48px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 18px;
+                    }
+            
+                    .menu-btn:hover {
+                        background: rgba(0, 0, 0, 0.2);
+                        transform: translateY(-1px);
+                    }
+            
+                    .loading {
+                        display: inline-block;
+                        width: 16px;
+                        height: 16px;
+                        border: 2px solid var(--neutral-300);
+                        border-top: 2px solid var(--primary-color);
+                        border-radius: 50%;
+                        animation: spin 1s linear infinite;
+                        margin-right: 8px;
+                    }
+            
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+            
+                    .modal-overlay {
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background: rgba(0, 0, 0, 0.5);
+                        backdrop-filter: blur(4px);
+                        z-index: 2000;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        animation: fadeIn 0.15s ease;
+                    }
+            
+                    .modal-dialog {
+                        background: white;
+                        border-radius: 16px;
+                        width: 90%;
+                        max-width: 1200px;
+                        max-height: 90vh;
+                        box-shadow: var(--shadow-xl);
+                        display: flex;
+                        flex-direction: column;
+                        animation: slideUp 0.15s ease;
+                    }
+            
+                    @keyframes fadeIn {
+                        from { opacity: 0; }
+                        to { opacity: 1; }
+                    }
+            
+                    @keyframes slideUp {
+                        from { transform: translateY(20px); opacity: 0; }
+                        to { transform: translateY(0); opacity: 1; }
+                    }
+            
+                    .modal-header {
+                        padding: 24px 32px;
+                        border-bottom: 1px solid var(--neutral-200);
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+            
+                    .modal-title {
+                        font-size: 20px;
+                        font-weight: 600;
+                        color: var(--neutral-800);
+                    }
+            
+                    .modal-close {
+                        background: var(--neutral-100);
+                        color: var(--neutral-600);
+                        border: none;
+                        padding: 8px 16px;
+                        border-radius: var(--border-radius);
+                        cursor: pointer;
+                        font-size: 14px;
+                        font-weight: 500;
+                        transition: all 0.15s ease;
+                    }
+            
+                    .modal-close:hover {
+                        background: var(--neutral-200);
+                        color: var(--neutral-700);
+                    }
+            
+                    .action-bar {
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                        margin-bottom: 24px;
+                        padding-bottom: 20px;
+                        border-bottom: 1px solid var(--neutral-200);
+                    }
+            
+                    .search-box {
+                        flex: 1;
+                        max-width: 300px;
+                    }
+            
+                    .badge {
+                        display: inline-flex;
+                        align-items: center;
+                        padding: 4px 8px;
+                        border-radius: 6px;
+                        font-size: 12px;
+                        font-weight: 500;
+                        background: var(--neutral-100);
+                        color: var(--neutral-600);
+                    }
+            
+                    .badge-primary {
+                        background: rgba(37, 99, 235, 0.1);
+                        color: var(--primary-color);
+                    }
+            
+                    .badge-success {
+                        background: rgba(5, 150, 105, 0.1);
+                        color: var(--success-color);
+                    }
+            
+                    .badge-warning {
+                        background: rgba(217, 119, 6, 0.1);
+                        color: var(--warning-color);
+                    }
+            
+                    @media (max-width: 768px) {
+                        .container {
+                            padding: 16px;
+                        }
                         
-                        <!-- 视图管理标签页 -->
-                        <div id="views-tab" class="tab-content">
-                            <button class="btn" onclick="loadViews()">刷新视图列表</button>
-                            <div id="views-result"></div>
-                        </div>
-
+                        .header h1 {
+                            font-size: 2rem;
+                        }
+                        
+                        .tabs {
+                            overflow-x: auto;
+                            scrollbar-width: none;
+                            -ms-overflow-style: none;
+                        }
+                        
+                        .tabs::-webkit-scrollbar {
+                            display: none;
+                        }
+                        
+                        .tab-content {
+                            padding: 20px;
+                        }
+                        
+                        .modal-dialog {
+                            width: 95%;
+                            max-height: 95vh;
+                        }
+                        
+                        .modal-header {
+                            padding: 20px;
+                        }
+                    }
+                </style>
+            </head>
+            <body>
+                <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+            
+                <div class="sidebar" id="sidebar">
+                    <div class="sidebar-header">
+                        <h3>数据库管理</h3>
+                    </div>
+                    <div class="sidebar-nav">
+                        <ul>
+                            <li onclick="showTab('sql-tab')">
+                                <span>📊</span>
+                                SQL 查询
+                            </li>
+                            <li onclick="showTab('tables-tab')">
+                                <span>🗃️</span>
+                                表管理
+                            </li>
+                            <li onclick="showTab('views-tab')">
+                                <span>👁️</span>
+                                视图管理
+                            </li>
+                            <li onclick="showTab('indexes-tab')">
+                                <span>⚡</span>
+                                索引管理
+                            </li>
+                            <li onclick="showTab('stats-tab')">
+                                <span>📈</span>
+                                统计信息
+                            </li>
+                            <li onclick="logout()" class="danger">
+                                <span>🚪</span>
+                                退出登录
+                            </li>
+                        </ul>
                     </div>
                 </div>
-            </div>
+            
+                <div class="container">
+                    <!-- 登录界面 -->
+                    <div id="login-interface">
+                        <div class="header">
+                            <h1>MiniSQL Enterprise</h1>
+                            <p>专业数据库管理平台</p>
+                        </div>
+            
+                        <div class="card login-card">
+                            <h2 style="text-align: center; margin-bottom: 32px; font-weight: 600; color: var(--neutral-800);">用户登录</h2>
+            
+                            <div class="form-group">
+                                <label for="username">用户名</label>
+                                <input type="text" id="username" placeholder="请输入用户名">
+                            </div>
+            
+                            <div class="form-group">
+                                <label for="password">密码</label>
+                                <input type="password" id="password" placeholder="请输入密码">
+                            </div>
+            
+                            <button class="btn" onclick="login()" style="width: 100%;">登录系统</button>
+            
+                            <div id="login-message"></div>
+            
+                            <div style="margin: 32px 0; height: 1px; background: var(--neutral-200);"></div>
+                            <p style="text-align: center; font-size: 13px; color: var(--neutral-500);">
+                                欢迎使用MiniSQL!
+                            </p>
+                        </div>
+                    </div>
+            
+                    <!-- 主界面 -->
+                    <div id="main-interface" class="main-interface">
+                        <div class="header">
+                            <h1>MiniSQL Enterprise</h1>
+                            <div class="user-info">
+                                <div class="user-avatar" id="user-avatar">A</div>
+                                <span>欢迎，<span id="current-user">用户</span></span>
+                            </div>
+                            <div style="clear: both;"></div>
+                        </div>
+            
+                        <div class="card">
+                            <div class="tabs">
+                                <div class="tab active" onclick="showTab('sql-tab')">SQL 查询</div>
+                                <div class="tab" onclick="showTab('tables-tab')">表管理</div>
+                                <div class="tab" onclick="showTab('views-tab')">视图管理</div>
+                                <div class="tab" onclick="showTab('indexes-tab')">索引管理</div>
+                                <div class="tab" onclick="showTab('stats-tab')">统计信息</div>
+                            </div>
+            
+                            <!-- SQL 查询标签页 -->
+                            <div id="sql-tab" class="tab-content active">
+                                <div class="form-group">
+                                    <label for="sql-input">SQL 语句 <kbd>Ctrl + Enter</kbd> 执行</label>
+                                    <textarea id="sql-input" class="sql-editor" placeholder="-- 请输入 SQL 语句&#10;SELECT * FROM your_table;"></textarea>
+                                </div>
+            
+                                <div class="action-bar">
+                                    <button class="btn" onclick="executeSql()">
+                                        <span id="execute-loading" style="display: none;" class="loading"></span>
+                                        执行查询
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="clearSql()">清空</button>
+                                    <button class="btn btn-secondary" onclick="formatSql()">格式化</button>
+                                </div>
+            
+                                <div id="sql-result"></div>
+                            </div>
+            
+                            <!-- 表管理标签页 -->
+                            <div id="tables-tab" class="tab-content">
+                                <div class="action-bar">
+                                    <button class="btn" onclick="loadTables()">刷新表列表</button>
+                                    <div class="search-box">
+                                        <input type="text" id="table-search" placeholder="搜索表名..." 
+                                               onkeyup="filterTables()" style="margin-bottom: 0;">
+                                    </div>
+                                </div>
+                                <div id="tables-result"></div>
+                            </div>
+            
+                            <!-- 视图管理标签页 -->
+                            <div id="views-tab" class="tab-content">
+                                <div class="action-bar">
+                                    <button class="btn" onclick="loadViews()">刷新视图列表</button>
+                                    <div class="search-box">
+                                        <input type="text" id="view-search" placeholder="搜索视图名..." 
+                                               onkeyup="filterViews()" style="margin-bottom: 0;">
+                                    </div>
+                                </div>
+                                <div id="views-result"></div>
+                            </div>
+            
+                            <!-- 索引管理标签页 -->
+                            <div id="indexes-tab" class="tab-content">
+                                <div class="action-bar">
+                                    <button class="btn" onclick="loadIndexes()">刷新索引列表</button>
+                                </div>
+                                <div id="indexes-result"></div>
+                            </div>
+            
+                            <!-- 统计信息标签页 -->
+                            <div id="stats-tab" class="tab-content">
+                                <div class="action-bar">
+                                    <button class="btn" onclick="loadStats()">刷新统计信息</button>
+                                </div>
+                                <div id="stats-result"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
             <script>
                 let currentUser = null;
@@ -428,13 +789,15 @@ class DatabaseWebAPI:
                     const sidebar = document.getElementById('sidebar');
                     sidebar.classList.toggle('open');
                 }
-
+        
                 // 显示消息
                 function showMessage(element, message, isError = false) {
                     const alertClass = isError ? 'alert-error' : 'alert-success';
                     element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
                     setTimeout(() => {
-                        element.innerHTML = '';
+                        if (element.querySelector('.alert')) {
+                            element.querySelector('.alert').remove();
+                        }
                     }, 5000);
                 }
 
