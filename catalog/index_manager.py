@@ -102,7 +102,7 @@ class IndexManager:
         return self.table_indexes.get(table_name, [])
 
     def insert_into_indexes(
-        self, table_name: str, record: Dict[str, Any], rid: tuple[int, int]
+            self, table_name: str, record: Dict[str, Any], rid: tuple[int, int]
     ) -> bool:
         """将记录插入到所有相关索引中，支持唯一性校验"""
         if table_name not in self.table_indexes:
@@ -118,10 +118,9 @@ class IndexManager:
                     existing = btree.search(key)
                     if existing is not None:
                         raise ValueError(f"索引唯一性冲突: {index_name}({key})")
-                if not btree.insert(key, record_id):
-                    return False
+                # 删除重复的错误行，只保留正确的插入
                 try:
-                    if not btree.insert(key, rid):
+                    if not btree.insert(key, rid):  # 使用rid，删除record_id那行
                         return False
                 except ValueError as e:
                     # 唯一性约束违反

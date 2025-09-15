@@ -101,7 +101,7 @@ simple_database/
 ├── catalog/                  # 系统目录层
 │   ├── __init__.py
 │   ├── data_types.py  # 列定义
-│   ├── table_schema.py       # 表结构定义
+│   ├── schema.py       # 表结构定义
 │   ├── system_catalog.py     # 系统目录管理
 │   └── index_manager.py      # 索引管理器 (新增)
 ├── table/                    # 表管理层

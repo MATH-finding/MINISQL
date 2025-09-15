@@ -1367,6 +1367,7 @@ class SQLExecutor:
                     result_records.append(row_out)
 
         else:
+            # 在 _execute_select 方法中，找到聚合查询部分，确保返回结构正确：
             # 检查是否有聚合函数（无分组 -> 全表聚合）
             if any(isinstance(col, AggregateFunction) for col in stmt.columns):
                 agg_result = {}
@@ -1430,7 +1431,8 @@ class SQLExecutor:
                                 raise ValueError("MAX参数不支持")
                         else:
                             raise ValueError(f"不支持的聚合函数: {func}")
-                result_records = [agg_result]
+                result_records = [agg_result]  # 确保这里是列表格式
+
             else:
                 # 选择列（原有逻辑）
                 result_records = []
@@ -1489,6 +1491,9 @@ class SQLExecutor:
                 reverse = (item.direction.upper() == "DESC")
                 result_records.sort(key=lambda r: r.get(name), reverse=reverse)
 
+        # 在方法最后的返回语句前添加检查：
+        if not isinstance(result_records, list):
+            result_records = []
         return {
             "type": "SELECT",
             "table_name": from_name,

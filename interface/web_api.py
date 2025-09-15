@@ -1252,6 +1252,8 @@ class DatabaseWebAPI:
                             }
 
                             resultEl.innerHTML = html;
+                            // 保持搜索框已有关键字的过滤效果
+                            filterTables();
                         } else {
                             showMessage(resultEl, result.message, true);
                         }
@@ -1583,6 +1585,7 @@ class DatabaseWebAPI:
                             }
 
                             resultEl.innerHTML = html;
+                            filterViews();
                         } else {
                             showMessage(resultEl, result.message, true);
                         }
@@ -2022,6 +2025,37 @@ class DatabaseWebAPI:
                     event.target.style.borderBottomColor = '#667eea';
                     document.getElementById(tabName + '-content').style.display = 'block';
                 }
+                
+                function normalizeText(str) {
+    return (str || '').toString().trim().toLowerCase();
+}
+
+                function filterTables() {
+                    const keyword = normalizeText(document.getElementById('table-search')?.value);
+                    const tbody = document.querySelector('#tables-result tbody');
+                    if (!tbody) return;
+                    const rows = tbody.querySelectorAll('tr');
+                    rows.forEach(row => {
+                        const nameCell = row.querySelector('td:first-child');
+                        const name = normalizeText(nameCell?.textContent);
+                        const match = !keyword || name.includes(keyword);
+                        row.style.display = match ? '' : 'none';
+                    });
+                }
+                
+                function filterViews() {
+                    const keyword = normalizeText(document.getElementById('view-search')?.value);
+                    const tbody = document.querySelector('#views-result tbody');
+                    if (!tbody) return;
+                    const rows = tbody.querySelectorAll('tr');
+                    rows.forEach(row => {
+                        const nameCell = row.querySelector('td:first-child');
+                        const name = normalizeText(nameCell?.textContent);
+                        const match = !keyword || name.includes(keyword);
+                        row.style.display = match ? '' : 'none';
+                    });
+                }
+
                 
                 // 快速预览视图数据
                 async function previewViewData(viewName) {
