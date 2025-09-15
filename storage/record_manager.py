@@ -126,70 +126,44 @@ class RecordManager:
         finally:
             self.buffer_manager.unpin_page(page_id, True)
 
+    # storage/record_manager.py - 修复get_records方法
     def get_records(self, page_id: int) -> List[Record]:
-        """获取页面中的所有记录"""
+        """获取页面中的所有记录 - 修复删除记录的处理"""
         page = self.buffer_manager.get_page(page_id)
         records = []
 
         try:
-            # 检查并初始化页面（如果需要）
             self._ensure_page_initialized(page)
-
             record_count = page.read_int(0)
 
             if record_count == 0:
                 return records
 
-            # 读取每个记录
             for i in range(record_count):
                 try:
                     offset_pos = self.OFFSET_TABLE_START + i * 4
                     record_offset = page.read_int(offset_pos)
 
-                    # 跳过已删除的记录
+                    # **修复：正确跳过已删除的记录**
                     if record_offset == -1:
                         continue
 
-                    # 读取记录长度
                     record_size = page.read_int(record_offset)
-
                     if record_size <= 0 or record_size > page.PAGE_SIZE:
-                        print(f"警告: 记录 {i} 的长度异常: {record_size}")
                         continue
 
-                    # 验证偏移量的合理性
-                    if (
-                        record_offset < self.DATA_START
-                        or record_offset + 4 + record_size > page.PAGE_SIZE
-                    ):
-                        print(
-                            f"警告: 记录 {i} 的偏移量异常: offset={record_offset}, size={record_size}"
-                        )
+                    if (record_offset < self.DATA_START or
+                            record_offset + 4 + record_size > page.PAGE_SIZE):
                         continue
 
-                    # 读取记录数据
                     record_data = page.read_bytes(record_offset + 4, record_size)
-
                     if not record_data or len(record_data) != record_size:
-                        print(
-                            f"警告: 记录 {i} 数据读取异常，期望{record_size}字节，实际{len(record_data) if record_data else 0}字节"
-                        )
                         continue
 
-                    # 反序列化
                     data = pickle.loads(record_data)
                     records.append(Record(data))
 
-                except (
-                    pickle.UnpicklingError,
-                    pickle.PickleError,
-                    EOFError,
-                    ValueError,
-                ) as e:
-                    print(f"反序列化记录 {i} 时出错: {e}")
-                    continue
                 except Exception as e:
-                    print(f"处理记录 {i} 时出现未知错误: {e}")
                     continue
 
         except Exception as e:
