@@ -322,7 +322,8 @@ class SQLExecutor:
                     # print(f"[EXECUTOR DEBUG] parsed view AST: {type(view_ast).__name__} -> {view_ast}")
 
                     # 步骤 1: 执行视图定义，得到原始结果（list of dict）
-                    view_result = self.execute(view_ast)
+                    # 直接调用 _execute_select 避免递归视图查询重写
+                    view_result = self._execute_select(view_ast)
                     # print(f"[EXECUTOR DEBUG] view execution result meta: success={view_result.get('success')}, rows={len(view_result.get('data', []) ) if isinstance(view_result.get('data'), list) else 'N/A'}")
                     if not view_result.get("success") or not isinstance(
                         view_result.get("data"), list
@@ -336,7 +337,14 @@ class SQLExecutor:
                         filtered_rows = []
                         for row in current_rows:
                             # 确保row是dict类型，如果不是则转换
-                            row_dict = dict(row) if hasattr(row, '__dict__') or hasattr(row, 'data') else row
+                            if hasattr(row, '__dict__'):
+                                row_dict = row.__dict__
+                            elif hasattr(row, 'data'):
+                                row_dict = row.data
+                            elif isinstance(row, dict):
+                                row_dict = row
+                            else:
+                                row_dict = dict(row)
                             if self._evaluate_condition(ast.where_clause, row_dict):
                                 filtered_rows.append(row_dict)
                         current_rows = filtered_rows
@@ -351,7 +359,11 @@ class SQLExecutor:
                     # print(f"[EXECUTOR DEBUG] projection columns: {columns_to_project}")
                     for row in current_rows:
                         if is_select_all:
-                            proj = dict(row)
+                            # 确保row是字典类型
+                            if isinstance(row, dict):
+                                proj = row.copy()
+                            else:
+                                proj = dict(row)
                         else:
                             proj = {}
                             for col in columns_to_project:
@@ -956,6 +968,19 @@ class SQLExecutor:
             columns.append(column)
 
         self.table_manager.create_table(stmt.table_name, columns)
+
+        # 自动为UNIQUE约束创建索引
+        if self.index_manager:
+            for column in columns:
+                if column.unique:
+                    # 为UNIQUE列创建唯一索引
+                    index_name = f"{stmt.table_name}_unique_{column.name}"
+                    success = self.index_manager.create_index(
+                        index_name, stmt.table_name, column.name, is_unique=True
+                    )
+                    if not success:
+                        # 如果索引创建失败，记录警告但不影响表创建
+                        print(f"警告: 无法为UNIQUE列 {column.name} 创建索引")
 
         return {
             "type": "CREATE_TABLE",
