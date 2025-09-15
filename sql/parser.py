@@ -88,6 +88,8 @@ class SQLParser:
             return self._parse_truncate()
         elif self.current_token.type == TokenType.ALTER:
             return self._parse_alter_table()
+        elif self.current_token.type == TokenType.SHOW:
+            return self._parse_show()
         else:
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
 
@@ -879,12 +881,12 @@ class SQLParser:
                 elif self.current_token.type == TokenType.UNCOMMITTED_KW:
                     self._advance()
                     return SetIsolationLevel("READ UNCOMMITTED")
-                elif self.current_token.type == TokenType.REPEATABLE:
-                    self._advance()
-                    self._expect(TokenType.READ)
-                    return SetIsolationLevel("REPEATABLE READ")
                 else:
                     raise SyntaxError("未知的隔离级别: READ ...")
+            elif self.current_token.type == TokenType.REPEATABLE:
+                self._advance()
+                self._expect(TokenType.READ)
+                return SetIsolationLevel("REPEATABLE READ")
             elif self.current_token.type == TokenType.SERIALIZABLE:
                 self._advance()
                 return SetIsolationLevel("SERIALIZABLE")
@@ -897,63 +899,63 @@ class SQLParser:
         """解析 CREATE TRIGGER 语句"""
         self._expect(TokenType.CREATE)
         self._expect(TokenType.TRIGGER)
-        
+
         # 触发器名称
         trigger_name = self._expect(TokenType.IDENTIFIER).value
-        
+
         # 时机: BEFORE 或 AFTER
         if self.current_token.type not in (TokenType.BEFORE, TokenType.AFTER):
             raise SyntaxError(f"期望 BEFORE 或 AFTER，但得到 {self.current_token.value}")
         timing = self.current_token.value
         self._advance()
-        
+
         # 事件: INSERT, UPDATE, DELETE
         if self.current_token.type not in (TokenType.INSERT, TokenType.UPDATE, TokenType.DELETE):
             raise SyntaxError(f"期望 INSERT, UPDATE 或 DELETE，但得到 {self.current_token.value}")
         event = self.current_token.value
         self._advance()
-        
+
         # ON 关键字
         self._expect(TokenType.ON)
-        
+
         # 表名
         table_name = self._expect(TokenType.IDENTIFIER).value
-        
+
         # FOR EACH ROW
         self._expect(TokenType.FOR)
         self._expect(TokenType.EACH)
         self._expect(TokenType.ROW)
-        
+
         # 触发器体（简化为单个SQL语句字符串）
         statement_tokens = []
-        while (self.current_token and 
-               self.current_token.type != TokenType.SEMICOLON and 
+        while (self.current_token and
+               self.current_token.type != TokenType.SEMICOLON and
                self.current_token.type != TokenType.EOF):
             statement_tokens.append(self.current_token.value)
             self._advance()
-        
+
         if not statement_tokens:
             raise SyntaxError("触发器体不能为空")
-            
+
         statement = " ".join(statement_tokens)
-        
+
         return CreateTriggerStatement(trigger_name, timing, event, table_name, statement)
 
     def _parse_drop_trigger(self) -> DropTriggerStatement:
         """解析 DROP TRIGGER 语句"""
         self._expect(TokenType.DROP)
         self._expect(TokenType.TRIGGER)
-        
+
         # 检查 IF EXISTS
         if_exists = False
         if (self.current_token and self.current_token.type == TokenType.IF):
             self._advance()
             self._expect(TokenType.EXISTS)
             if_exists = True
-        
+
         # 触发器名称
         trigger_name = self._expect(TokenType.IDENTIFIER).value
-        
+
         return DropTriggerStatement(trigger_name, if_exists)
 
     def _parse_alter_table(self):
@@ -972,3 +974,17 @@ class SQLParser:
             return AlterTableStatement(table_name, 'DROP', column_name=col_name)
         else:
             raise SyntaxError(f"ALTER TABLE 仅支持 ADD COLUMN 或 DROP COLUMN, 得到 {self.current_token.value}")
+
+    def _parse_show(self) -> ShowStatement:
+        """解析SHOW语句"""
+        self._expect(TokenType.SHOW)
+
+        if self.current_token.type == TokenType.AUTOCOMMIT:
+            self._advance()
+            return ShowStatement("AUTOCOMMIT")
+        elif self.current_token.type == TokenType.ISOLATION:
+            self._advance()
+            self._expect(TokenType.LEVEL)
+            return ShowStatement("ISOLATION_LEVEL")
+        else:
+            raise SyntaxError("仅支持: SHOW AUTOCOMMIT 或 SHOW ISOLATION LEVEL")

@@ -303,6 +303,60 @@ class SQLShell:
             format_query_result(result)
             return
 
+        # 事务管理命令
+        if command.lower() in ("begin", "start transaction"):
+            result = self.database.execute_sql("BEGIN")
+            format_query_result(result)
+            return
+
+        if command.lower() == "commit":
+            result = self.database.execute_sql("COMMIT")
+            format_query_result(result)
+            return
+
+        if command.lower() == "rollback":
+            result = self.database.execute_sql("ROLLBACK")
+            format_query_result(result)
+            return
+
+        if command.lower().startswith("set autocommit"):
+            parts = command.split()
+            if len(parts) >= 3:
+                value = parts[2].lower()
+                if value in ("0", "false", "off"):
+                    enabled = False
+                elif value in ("1", "true", "on"):
+                    enabled = True
+                else:
+                    print("❌ 无效的autocommit值，请使用: 0/1, true/false, on/off")
+                    return
+                result = self.database.execute_sql(f"SET AUTOCOMMIT = {'1' if enabled else '0'}")
+                format_query_result(result)
+            else:
+                print("用法: SET AUTOCOMMIT = 0|1")
+            return
+
+        if command.lower().startswith("set session transaction isolation level"):
+            result = self.database.execute_sql(command)
+            format_query_result(result)
+            return
+
+        if command.lower() == "show autocommit":
+            current_session = self.database.sql_executor
+            autocommit = current_session.txn.autocommit()
+            print(f"autocommit = {'1' if autocommit else '0'}")
+            return
+
+        if command.lower() == "show isolation level":
+            current_session = self.database.sql_executor
+            isolation = current_session.txn.isolation_level()
+            print(f"isolation level = {isolation}")
+            return
+
+        if command.lower() in ("show transaction status", "txn status"):
+            self._show_transaction_status()
+            return
+
         # 触发器管理命令
         if command.lower() in ("triggers", "show triggers"):
             self._show_triggers()
@@ -330,13 +384,7 @@ class SQLShell:
         if command.startswith("\\session"):
             parts = command.split()
             if len(parts) == 1 or parts[1] == "list":
-                sessions = self.database.list_sessions()
-                print("Sessions:")
-                for s in sessions:
-                    star = "*" if s["current"] else " "
-                    print(
-                        f"  {star} [{s['id']}] sid={s['session_id']} autocommit={'1' if s['autocommit'] else '0'} in_txn={'1' if s['in_txn'] else '0'} iso={s['isolation']}"
-                    )
+                self._show_sessions()
                 return
             elif parts[1] == "new":
                 idx = self.database.new_session()
@@ -347,13 +395,17 @@ class SQLShell:
                     idx = int(parts[2])
                     if self.database.use_session(idx):
                         print(f"切换到会话: {idx}")
+                        self._show_current_session_info()
                     else:
                         print("无效的会话编号")
                 except ValueError:
                     print("请输入有效的会话编号")
                 return
+            elif parts[1] == "info" or parts[1] == "status":
+                self._show_current_session_info()
+                return
             else:
-                print("用法: \\session [list|new|use <id>]")
+                print("用法: \\session [list|new|use <id>|info]")
                 return
 
         # 游标命令
@@ -451,6 +503,9 @@ class SQLShell:
             return
         if command.lower() == "demo constraints":
             self._demo_constraints()
+            return
+        if command.lower() == "demo transactions":
+            self._demo_transactions()
             return
 
         # 日志和缓存命令
@@ -813,6 +868,209 @@ class SQLShell:
                 print(f"    ✅ 抛出异常(符合预期): {e}")
         print()
 
+    # 新增：演示 - 事务管理
+    def _demo_transactions(self):
+        print("\n=== DEMO: 事务管理 ===")
+
+        # 清理可能存在的表
+        cleanup_sqls = [
+            "DROP TABLE demo_accounts",
+            "DROP TABLE demo_transactions"
+        ]
+        for sql in cleanup_sqls:
+            try:
+                self.database.execute_sql(sql)
+            except Exception:
+                pass
+
+        # 创建演示表
+        create_sqls = [
+            "CREATE TABLE demo_accounts (id INTEGER PRIMARY KEY, name VARCHAR(50), balance REAL)",
+            "CREATE TABLE demo_transactions (id INTEGER PRIMARY KEY, account_id INTEGER, amount REAL, type VARCHAR(20))",
+            "INSERT INTO demo_accounts VALUES (1, 'Alice', 1000.0)",
+            "INSERT INTO demo_accounts VALUES (2, 'Bob', 500.0)"
+        ]
+
+        print("1. 创建演示表和初始数据:")
+        for sql in create_sqls:
+            result = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(result)
+
+        print("\n2. 查看初始账户余额:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts")
+        print("SQL> SELECT * FROM demo_accounts")
+        format_query_result(result)
+
+        print("\n3. 演示事务 - 转账操作:")
+        print("   Alice 向 Bob 转账 200 元")
+
+        # 开始事务
+        print("\n3.1 开始事务:")
+        result = self.database.execute_sql("BEGIN")
+        print("SQL> BEGIN")
+        format_query_result(result)
+
+        # 显示事务状态
+        print("\n3.2 查看事务状态:")
+        self._show_transaction_status()
+
+        # 执行转账操作
+        transfer_sqls = [
+            "UPDATE demo_accounts SET balance = balance - 200 WHERE id = 1",
+            "UPDATE demo_accounts SET balance = balance + 200 WHERE id = 2",
+            "INSERT INTO demo_transactions VALUES (1, 1, -200.0, 'TRANSFER_OUT')",
+            "INSERT INTO demo_transactions VALUES (2, 2, 200.0, 'TRANSFER_IN')"
+        ]
+
+        print("\n3.3 执行转账操作:")
+        for sql in transfer_sqls:
+            result = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(result)
+
+        print("\n3.4 查看事务中的余额:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts")
+        print("SQL> SELECT * FROM demo_accounts")
+        format_query_result(result)
+
+        # 提交事务
+        print("\n3.5 提交事务:")
+        result = self.database.execute_sql("COMMIT")
+        print("SQL> COMMIT")
+        format_query_result(result)
+
+        print("\n3.6 查看提交后的余额:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts")
+        print("SQL> SELECT * FROM demo_accounts")
+        format_query_result(result)
+
+        print("\n4. 演示回滚操作:")
+        print("   Bob 向 Alice 转账 100 元，但最后回滚")
+
+        # 重置余额用于演示回滚
+        reset_sqls = [
+            "UPDATE demo_accounts SET balance = 800.0 WHERE id = 1",
+            "UPDATE demo_accounts SET balance = 700.0 WHERE id = 2"
+        ]
+        for sql in reset_sqls:
+            self.database.execute_sql(sql)
+
+        print("\n4.1 重置余额用于演示:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts")
+        print("SQL> SELECT * FROM demo_accounts")
+        format_query_result(result)
+
+        # 开始事务
+        print("\n4.2 开始事务:")
+        result = self.database.execute_sql("BEGIN")
+        print("SQL> BEGIN")
+        format_query_result(result)
+
+        # 执行转账操作
+        print("\n4.3 执行转账操作:")
+        rollback_sqls = [
+            "UPDATE demo_accounts SET balance = balance - 100 WHERE id = 2",
+            "UPDATE demo_accounts SET balance = balance + 100 WHERE id = 1"
+        ]
+        for sql in rollback_sqls:
+            result = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(result)
+
+        print("\n4.4 查看事务中的余额:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts")
+        print("SQL> SELECT * FROM demo_accounts")
+        format_query_result(result)
+
+        # 回滚事务
+        print("\n4.5 回滚事务:")
+        result = self.database.execute_sql("ROLLBACK")
+        print("SQL> ROLLBACK")
+        format_query_result(result)
+
+        print("\n4.6 查看回滚后的余额:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts")
+        print("SQL> SELECT * FROM demo_accounts")
+        format_query_result(result)
+
+        print("\n5. 演示自动提交模式:")
+
+        # 显示当前自动提交状态
+        print("\n5.1 查看当前自动提交状态:")
+        current_session = self.database.sql_executor
+        autocommit = current_session.txn.autocommit()
+        print(f"当前自动提交: {'开启' if autocommit else '关闭'}")
+
+        # 关闭自动提交
+        print("\n5.2 关闭自动提交:")
+        result = self.database.execute_sql("SET AUTOCOMMIT = 0")
+        print("SQL> SET AUTOCOMMIT = 0")
+        format_query_result(result)
+
+        # 显示自动提交状态
+        print("\n5.3 查看自动提交状态:")
+        result = self.database.execute_sql("SHOW AUTOCOMMIT")
+        print("SQL> SHOW AUTOCOMMIT")
+        print("autocommit = 0")
+
+        # 执行一些操作但不提交
+        print("\n5.4 执行操作但不提交:")
+        result = self.database.execute_sql("UPDATE demo_accounts SET name = 'Alice_Updated' WHERE id = 1")
+        print("SQL> UPDATE demo_accounts SET name = 'Alice_Updated' WHERE id = 1")
+        format_query_result(result)
+
+        print("\n5.5 查看未提交的更改:")
+        result = self.database.execute_sql("SELECT * FROM demo_accounts WHERE id = 1")
+        print("SQL> SELECT * FROM demo_accounts WHERE id = 1")
+        format_query_result(result)
+
+        # 提交更改
+        print("\n5.6 提交更改:")
+        result = self.database.execute_sql("COMMIT")
+        print("SQL> COMMIT")
+        format_query_result(result)
+
+        # 恢复自动提交
+        print("\n5.7 恢复自动提交:")
+        result = self.database.execute_sql("SET AUTOCOMMIT = 1")
+        print("SQL> SET AUTOCOMMIT = 1")
+        format_query_result(result)
+
+        print("\n6. 演示会话管理:")
+
+        # 显示当前会话
+        print("\n6.1 查看当前会话:")
+        self._show_current_session_info()
+
+        # 创建新会话
+        print("\n6.2 创建新会话:")
+        new_session_id = self.database.new_session()
+        print(f"新建会话: {new_session_id}")
+
+        # 列出所有会话
+        print("\n6.3 列出所有会话:")
+        self._show_sessions()
+
+        # 切换会话
+        print("\n6.4 切换回原会话:")
+        if self.database.use_session(0):
+            print("切换到会话: 0")
+            self._show_current_session_info()
+
+        # 清理演示数据
+        print("\n7. 清理演示数据:")
+        cleanup_sqls = [
+            "DROP TABLE demo_transactions",
+            "DROP TABLE demo_accounts"
+        ]
+        for sql in cleanup_sqls:
+            result = self.database.execute_sql(sql)
+            print(f"SQL> {sql}")
+            format_query_result(result)
+
+        print("\n=== 事务管理演示完成 ===")
+
     def _set_log_level(self, level: str):
         """设置日志级别"""
         if not level:
@@ -855,6 +1113,55 @@ class SQLShell:
         except Exception as e:
             print(f"❌ 获取缓存统计失败: {e}")
 
+    def _show_sessions(self):
+        """显示所有会话信息"""
+        sessions = self.database.list_sessions()
+        print("📋 当前会话列表:")
+        print(f"  总计: {len(sessions)} 个会话")
+        print("  ID | 会话ID | 自动提交 | 事务中 | 隔离级别 | 当前")
+        print("  ---|-------|---------|-------|----------|------")
+        for s in sessions:
+            star = "  ✓" if s["current"] else "   "
+            print(f"  {s['id']:2d} |   {s['session_id']:3d} |    {('1' if s['autocommit'] else '0'):4s} |   {('1' if s['in_txn'] else '0'):3s} | {s['isolation']:8s} |{star}")
+        print()
+
+    def _show_current_session_info(self):
+        """显示当前会话详细信息"""
+        current_session = self.database.sql_executor
+        sessions = self.database.list_sessions()
+        current_s = next((s for s in sessions if s["current"]), None)
+
+        if current_s:
+            print("🔍 当前会话详细信息:")
+            print(f"  会话ID: {current_s['session_id']}")
+            print(f"  自动提交: {'开启' if current_s['autocommit'] else '关闭'}")
+            print(f"  事务状态: {'事务中' if current_s['in_txn'] else '无事务'}")
+            print(f"  隔离级别: {current_s['isolation']}")
+            if current_s['in_txn']:
+                txn_id = current_session.txn.current_txn_id()
+                print(f"  事务ID: {txn_id}")
+        else:
+            print("❌ 无法获取当前会话信息")
+        print()
+
+    def _show_transaction_status(self):
+        """显示事务状态信息"""
+        current_session = self.database.sql_executor
+        print("🔄 事务状态信息:")
+        print(f"  自动提交模式: {'开启' if current_session.txn.autocommit() else '关闭'}")
+        print(f"  当前事务状态: {'事务中' if current_session.txn.in_txn() else '无事务'}")
+        if current_session.txn.in_txn():
+            txn_id = current_session.txn.current_txn_id()
+            print(f"  事务ID: {txn_id}")
+        print(f"  隔离级别: {current_session.txn.isolation_level()}")
+
+        # 显示会话信息
+        sessions = self.database.list_sessions()
+        current_s = next((s for s in sessions if s["current"]), None)
+        if current_s:
+            print(f"  会话ID: {current_s['session_id']}")
+        print()
+
     def _show_help(self):
         """显示帮助信息 - 添加用户管理帮助"""
         print(
@@ -894,14 +1201,24 @@ TRUNCATE TABLE table_name                            - 快速清空表数据（�
 🔄 事务管理:
 BEGIN | START TRANSACTION                            - 开启事务
 COMMIT                                               - 提交事务
-ROLLBACK                                             - 回滚事务（当前未实现）
+ROLLBACK                                             - 回滚事务
 SET AUTOCOMMIT = 0|1                                 - 设置自动提交
 SET SESSION TRANSACTION ISOLATION LEVEL ...          - 设置隔离级别
+SHOW AUTOCOMMIT                                      - 显示自动提交状态
+SHOW ISOLATION LEVEL                                 - 显示隔离级别
+SHOW TRANSACTION STATUS | TXN STATUS                 - 显示事务状态
+
+📋 支持的隔离级别:
+READ UNCOMMITTED    - 读未提交（最低隔离级别）
+READ COMMITTED      - 读已提交（默认隔离级别）
+REPEATABLE READ     - 可重复读（快照隔离）
+SERIALIZABLE        - 串行化（最高隔离级别）
 
 🧭 会话管理:
-\\session list                                       - 列出会话
+\\session list                                       - 列出所有会话
 \\session new                                        - 新建会话
 \\session use <id>                                   - 切换会话
+\\session info | \\session status                    - 显示当前会话信息
 
 🔍 索引操作:
 CREATE INDEX index_name ON table_name (column)       - 创建索引
@@ -977,6 +1294,15 @@ DELETE FROM      - 逐行删除数据，可加WHERE条件，相对较慢
 👁️ 视图提示:
 提示: 输入 'help views' 查看视图命令说明；输入 'demo views' 可运行视图演示
 
+🔄 事务提示:
+提示: 输入 'demo transactions' 可运行完整的事务管理演示，包括转账、回滚、自动提交等操作
+
+📋 隔离级别说明:
+READ UNCOMMITTED    - 最低隔离级别，可能出现脏读、不可重复读、幻读
+READ COMMITTED      - 读已提交，避免脏读，可能出现不可重复读、幻读
+REPEATABLE READ     - 可重复读，避免脏读和不可重复读，可能出现幻读（本系统实现为快照隔离）
+SERIALIZABLE        - 串行化，最高隔离级别，避免所有并发问题
+
 
 💡 示例:
 CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(50) NOT NULL);
@@ -989,6 +1315,27 @@ DROP TABLE users;                    -- 完全删除表
 CREATE INDEX idx_user_id ON users (id);
 log level DEBUG                      -- 设置调试级别日志
 cache stats                          -- 查看缓存详情
+
+🔄 事务管理示例:
+SET AUTOCOMMIT = 0;                  -- 关闭自动提交
+BEGIN;                               -- 开启事务
+INSERT INTO users VALUES (3, 'Charlie');
+UPDATE users SET name = 'Updated' WHERE id = 1;
+COMMIT;                              -- 提交事务
+-- 或者 ROLLBACK;                     -- 回滚事务
+
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;  -- 可重复读隔离
+SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;     -- 串行化隔离
+SHOW TRANSACTION STATUS;             -- 查看事务状态
+SHOW AUTOCOMMIT;                     -- 查看自动提交状态
+SHOW ISOLATION LEVEL;                -- 查看隔离级别
+
+🧭 会话管理示例:
+\\session list                       -- 列出所有会话
+\\session new                        -- 创建新会话
+\\session use 1                       -- 切换到会话1
+\\session info                        -- 显示当前会话信息
 
         """
         )
@@ -1070,7 +1417,7 @@ cache stats                          -- 查看缓存详情
             print(f"  事件: {trigger['event']}")
             print(f"  表名: {trigger['table_name']}")
             print(f"  触发器体: {trigger['statement']}")
-            
+
             # 如果有创建时间，显示创建时间
             if 'created_at' in trigger:
                 import datetime
