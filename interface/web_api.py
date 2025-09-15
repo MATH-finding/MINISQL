@@ -2185,6 +2185,114 @@ class DatabaseWebAPI:
                     // 添加调试信息
                     console.log('页面加载完成，准备刷新事务状态');
                 });
+
+                // ====== SQL 输入框自动补全（灰色联想） ======
+                (function() {
+                    // 创建建议下拉框
+                    const suggestDiv = document.createElement('div');
+                    suggestDiv.id = 'sql-suggest-list';
+                    suggestDiv.style.cssText = 'position: absolute; z-index: 1000; background: white; border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: none; min-width: 200px; font-size: 14px; max-height: 220px; overflow-y: auto;';
+                    document.body.appendChild(suggestDiv);
+
+                    function positionSuggestDiv() {
+                        const input = document.getElementById('sql-input');
+                        const rect = input.getBoundingClientRect();
+                        suggestDiv.style.left = rect.left + window.scrollX + 'px';
+                        suggestDiv.style.top = (rect.bottom + window.scrollY) + 'px';
+                        suggestDiv.style.width = rect.width + 'px';
+                    }
+
+                    let lastPrefix = '';
+                    let lastVal = '';
+                    let lastSuggestions = [];
+
+                    document.getElementById('sql-input').addEventListener('input', async function(e) {
+                        const val = e.target.value;
+                        // 取光标前最后一个单词（允许空格/换行分隔）
+                        const caret = e.target.selectionStart;
+                        const before = val.slice(0, caret);
+                        const match = before.match(/([\w.]+)$/);
+                        const lastWord = match ? match[1] : '';
+                        if (!lastWord) {
+                            suggestDiv.style.display = 'none';
+                            return;
+                        }
+                        positionSuggestDiv();
+                        try {
+                            const resp = await fetch('/api/sql/suggest', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                credentials: 'include',
+                                body: JSON.stringify({prefix: lastWord})
+                            });
+                            const result = await resp.json();
+                            if (result.success && result.suggestions.length > 0) {
+                                lastSuggestions = result.suggestions;
+                                suggestDiv.innerHTML = result.suggestions.map(s => `<div class=\"sql-suggest-item\" style=\"padding: 8px 12px; cursor: pointer;\">${s}</div>`).join('');
+                                suggestDiv.style.display = 'block';
+                                // 绑定点击事件
+                                Array.from(suggestDiv.children).forEach(item => {
+                                    item.onclick = () => {
+                                        // 替换最后一个词为建议
+                                        const input = document.getElementById('sql-input');
+                                        const v = input.value;
+                                        const c = input.selectionStart;
+                                        const before = v.slice(0, c).replace(/([\w.]+)$/, '');
+                                        const after = v.slice(c);
+                                        input.value = before + item.textContent + ' ' + after;
+                                        input.focus();
+                                        // 移动光标到补全后
+                                        const newPos = (before + item.textContent + ' ').length;
+                                        input.setSelectionRange(newPos, newPos);
+                                        suggestDiv.style.display = 'none';
+                                    };
+                                });
+                            } else {
+                                suggestDiv.style.display = 'none';
+                            }
+                        } catch {
+                            suggestDiv.style.display = 'none';
+                        }
+                    });
+
+                    // 失焦/ESC 隐藏
+                    document.getElementById('sql-input').addEventListener('blur', function() {
+                        setTimeout(() => { suggestDiv.style.display = 'none'; }, 200);
+                    });
+                    document.getElementById('sql-input').addEventListener('keydown', function(e) {
+                        if (e.key === 'Escape') suggestDiv.style.display = 'none';
+                        // 支持上下键选择建议
+                        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && suggestDiv.style.display === 'block') {
+                            e.preventDefault();
+                            const items = Array.from(suggestDiv.children);
+                            let idx = items.findIndex(x => x.classList.contains('active'));
+                            if (e.key === 'ArrowDown') idx = (idx + 1) % items.length;
+                            if (e.key === 'ArrowUp') idx = (idx - 1 + items.length) % items.length;
+                            items.forEach(x => x.classList.remove('active'));
+                            if (items[idx]) items[idx].classList.add('active');
+                        }
+                        // 回车选中建议
+                        if (e.key === 'Enter' && suggestDiv.style.display === 'block') {
+                            const items = Array.from(suggestDiv.children);
+                            const active = items.find(x => x.classList.contains('active')) || items[0];
+                            if (active) {
+                                active.click();
+                                e.preventDefault();
+                            }
+                        }
+                    });
+                })();
+                // ====== 补全下拉选中项阴影样式 ======
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    #sql-suggest-list .sql-suggest-item.active {
+                        background: #f1f5fa;
+                        box-shadow: 0 2px 8px 0 rgba(30,64,175,0.18), 0 0px 0px 0 rgba(0,0,0,0.00);
+                        font-weight: 600;
+                        color: #1e40af;
+                    }
+                `;
+                document.head.appendChild(style);
             </script>
         </body>
         </html>'''
@@ -2990,6 +3098,37 @@ class DatabaseWebAPI:
             except Exception as e:
                 logger.error(f"获取会话列表失败: {e}")
                 return jsonify({'success': False, 'message': f'获取会话列表失败: {str(e)}'}), 500
+
+        @self.app.route('/api/sql/suggest', methods=['POST'])
+        def sql_suggest():
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+            try:
+                data = request.get_json() or {}
+                prefix = (data.get('prefix') or '').strip().lower()
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                # 1. 固定建议词
+                seed_words = [
+                    "help", "tables", "views", "triggers", "stats", "indexes", "describe ", "show ","FROM",
+                    "CREATE TABLE ", "CREATE TRIGGER ", "SELECT ", "INSERT INTO ", "UPDATE ", "DELETE FROM ",
+                ]
+                # 2. 表名、视图名
+                try:
+                    tables = db.list_tables() or []
+                except Exception:
+                    tables = []
+                try:
+                    views = db.list_views() if hasattr(db, "list_views") else []
+                except Exception:
+                    views = []
+                # 3. 合并并过滤
+                all_words = seed_words + tables + views
+                suggestions = [w for w in all_words if w.lower().startswith(prefix) and w.lower() != prefix]
+                return jsonify({'success': True, 'suggestions': suggestions[:10]})
+            except Exception as e:
+                return jsonify({'success': False, 'suggestions': [], 'error': str(e)})
 
     def _handle_shell_command(self, command: str, db) -> dict:
         """处理Shell命令"""
