@@ -102,6 +102,7 @@ class TokenType(Enum):
     ALTER = "ALTER"
     ADD = "ADD"
     COLUMN = "COLUMN"
+    SHOW = "SHOW"
 
     # 布尔值
     TRUE = "TRUE"
@@ -236,6 +237,7 @@ class SQLLexer:
         "ALTER": TokenType.ALTER,
         "ADD": TokenType.ADD,
         "COLUMN": TokenType.COLUMN,
+        "SHOW": TokenType.SHOW,
     }
 
     def __init__(self, sql: str):

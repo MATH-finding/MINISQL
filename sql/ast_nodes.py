@@ -447,3 +447,13 @@ class AlterTableStatement(Statement):
             return f"ALTER TABLE {self.table_name} DROP COLUMN {self.column_name}"
         else:
             return f"ALTER TABLE {self.table_name} <UNKNOWN ACTION>"
+
+
+class ShowStatement(Statement):
+    """SHOW语句"""
+
+    def __init__(self, show_type: str):
+        self.show_type = show_type  # 'AUTOCOMMIT', 'ISOLATION_LEVEL', etc.
+
+    def __repr__(self):
+        return f"SHOW {self.show_type}"
