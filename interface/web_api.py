@@ -2202,23 +2202,25 @@ class DatabaseWebAPI:
                         'message': '请求数据不能为空'
                     }), 400
 
-                # 验证必需字段
-                required_fields = ['trigger_name', 'timing', 'event', 'table_name', 'statement']
-                for field in required_fields:
-                    if field not in data:
-                        return jsonify({
-                            'success': False,
-                            'message': f'缺少必需字段: {field}'
-                        }), 400
+                # 直接获取名为 'sql' 的字段，其内容是完整的 CREATE TRIGGER 语句
+                sql = data.get('sql', '').strip()
+                if not sql:
+                    return jsonify({
+                        'success': False,
+                        'message': '缺少必需的 sql 字段'
+                    }), 400
 
-                # 构造CREATE TRIGGER SQL
-                sql = f"""CREATE TRIGGER {data['trigger_name']} 
-                         {data['timing']} {data['event']} 
-                         ON {data['table_name']} 
-                         FOR EACH ROW {data['statement']};"""
+                # (可选) 增加一个简单的校验，确保是创建触发器的语句
+                if not sql.upper().startswith('CREATE TRIGGER'):
+                    return jsonify({
+                        'success': False,
+                        'message': '此接口只接受 CREATE TRIGGER 语句'
+                    }), 400
 
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
+                
+                # 直接执行这个完整的、由客户端保证语法正确的SQL语句
                 result = db.execute_sql(sql)
 
                 return jsonify(result)

@@ -8,6 +8,7 @@ from storage import Record
 from catalog import DataType, ColumnDefinition, SystemCatalog
 from table import TableManager
 from .ast_nodes import *
+import re
 
 
 class TableLockManager:
@@ -57,6 +58,8 @@ class TransactionManager:
         self._isolation_level: str = "READ COMMITTED"
         # REPEATABLE READ 快照：table -> List[dict]
         self._rr_snapshot: Dict[str, List[Dict[str, Any]]] = {}
+        # 触发器递归检测栈
+        self._trigger_stack: List[str] = []
 
     def set_autocommit(self, enabled: bool):
         # MySQL: SET autocommit=0 开启事务性上下文；=1 退出并隐式提交当前事务
@@ -492,22 +495,14 @@ class SQLExecutor:
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
 
-        # 执行BEFORE INSERT触发器
-        before_results = self._execute_triggers(stmt.table_name, "INSERT", "BEFORE")
-        
-        # 检查BEFORE触发器是否都成功
-        for result in before_results:
-            if not result.get("success", False):
-                return {
-                    "type": "INSERT",
-                    "success": False,
-                    "message": f"BEFORE INSERT触发器失败: {result.get('message', '')}"
-                }
+        self._maybe_lock_exclusive(stmt.table_name)
+        all_before_results = []
+        all_after_results = []
+        inserted_count = 0
 
         # SERIALIZABLE: 写锁
         self._maybe_lock_exclusive(stmt.table_name)
 
-        inserted_count = 0
         for value_row in stmt.values:
             record_data: Dict[str, Any] = {}
             if stmt.columns:
@@ -602,6 +597,13 @@ class SQLExecutor:
                             raise ValueError(
                                 f"外键约束不满足: {column.name} -> {ref_table}({ref_column})"
                             )
+            # 关键修复：在这里传递 new_data 给 BEFORE 触发器
+            try:
+                before_results = self._execute_triggers(stmt.table_name, "INSERT", "BEFORE", new_data=record_data)
+                all_before_results.extend(before_results)
+            except Exception as e:
+                return {"type": "INSERT", "success": False, "message": f"BEFORE INSERT触发器失败: {e}"}
+
 
             # 实际插入
             page_id, ridx = None, None
@@ -652,21 +654,27 @@ class SQLExecutor:
 
             inserted_count += 1
 
-        # 执行AFTER INSERT触发器
-        after_results = self._execute_triggers(stmt.table_name, "INSERT", "AFTER")
+        # --- 修改点2：在循环内部调用 AFTER 触发器 ---
+            try:
+                after_results = self._execute_triggers(stmt.table_name, "INSERT", "AFTER", new_data=record_data)
+                all_after_results.extend(after_results)
+            except Exception as e:
+                # 注意: 如果AFTER触发器失败，操作已经发生，需要回滚整个语句。
+                # 这里简化处理，直接返回错误。
+                return {"type": "INSERT", "success": False, "message": f"AFTER INSERT触发器失败: {e}"}
 
+        # --- 修改点3：更新返回结果 ---
         return {
             "type": "INSERT",
             "table_name": stmt.table_name,
             "rows_inserted": inserted_count,
             "success": True,
             "trigger_results": {
-                "before": before_results,
-                "after": after_results
+                "before": all_before_results,
+                "after": all_after_results  # 现在这里包含了所有行的AFTER触发器结果
             },
             "message": f"成功插入 {inserted_count} 行到表 {stmt.table_name}",
         }
-
     def _execute_insert(self, stmt: InsertStatement) -> Dict[str, Any]:
         """执行INSERT - 修复版，正确处理记录ID（兼容版本）"""
         return self._execute_insert_immediate_undo(stmt)
@@ -1479,68 +1487,50 @@ class SQLExecutor:
                 if 0 <= record_id < len(all_records):
                     result.append(all_records[record_id])
             return result
-
+    # 在 executor.py 文件中，找到并替换此函数
     def _execute_update_with_undo(self, stmt: UpdateStatement) -> Dict[str, Any]:
-        """执行UPDATE with Undo支持"""
-        # SERIALIZABLE: 写锁
+        """执行UPDATE with Undo支持和触发器数据传递"""
         self._maybe_lock_exclusive(stmt.table_name)
-
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise ValueError(f"表 {stmt.table_name} 不存在")
 
-        # 执行BEFORE UPDATE触发器
-        before_results = self._execute_triggers(stmt.table_name, "UPDATE", "BEFORE")
-        
-        # 检查BEFORE触发器是否都成功
-        for result in before_results:
-            if not result.get("success", False):
-                return {
-                    "type": "UPDATE",
-                    "success": False,
-                    "message": f"BEFORE UPDATE触发器失败: {result.get('message', '')}"
-                }
-
-        # 预计算 updates 值
         updates: Dict[str, Any] = {}
         for set_clause in stmt.set_clauses:
-            column_name = set_clause["column"]
-            value_expr = set_clause["value"]
-            if isinstance(value_expr, Literal):
-                updates[column_name] = value_expr.value
-            else:
-                raise ValueError("UPDATE暂时只支持字面量值")
+            updates[set_clause["column"]] = self._evaluate_expression(set_clause["value"], {})
 
         updated = 0
+        all_before_results = []
+        all_after_results = []
+        
+        # 需要一个可修改的列表来迭代，因为我们可能在循环中删除
+        records_to_process = list(self.table_manager.scan_table_with_locations(stmt.table_name))
 
-        # 如果支持位置更新
-        if hasattr(self.table_manager, 'scan_table_with_locations') and hasattr(self.table_manager, 'update_at'):
-            for page_id, idx, rec in self.table_manager.scan_table_with_locations(stmt.table_name):
-                if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
-                    old_data = dict(rec.data)
-                    new_data = dict(old_data)
-                    new_data.update(updates)
-                    if self.table_manager.update_at(stmt.table_name, page_id, idx, new_data):
-                        updated += 1
-                        # 写入undo
-                        self._push_undo({
-                            "type": "UPDATE",
-                            "table": stmt.table_name,
-                            "page_id": page_id,
-                            "index": idx,
-                            "old_data": old_data,
-                        })
-        else:
-            # 兼容版本
-            condition_func = None
-            if stmt.where_clause:
-                condition_func = lambda record_data: self._evaluate_condition(stmt.where_clause, record_data)
+        for page_id, idx, rec in records_to_process:
+            if stmt.where_clause is None or self._evaluate_condition(stmt.where_clause, rec.data):
+                old_data = dict(rec.data)
+                new_data = old_data.copy()
+                new_data.update(updates)
 
-            if hasattr(self.table_manager, 'update_records'):
-                updated = self.table_manager.update_records(stmt.table_name, updates, condition_func)
+                # 关键修复：传递 old_data 和 new_data
+                try:
+                    before_results = self._execute_triggers(stmt.table_name, "UPDATE", "BEFORE", new_data=new_data, old_data=old_data)
+                    all_before_results.extend(before_results)
+                except Exception as e:
+                    return {"type": "UPDATE", "success": False, "message": f"BEFORE UPDATE触发器失败: {e}"}
 
-        # 执行AFTER UPDATE触发器
-        after_results = self._execute_triggers(stmt.table_name, "UPDATE", "AFTER")
+                # (实际更新和写入Undo日志的代码保持不变)
+                if self.table_manager.update_at(stmt.table_name, page_id, idx, new_data):
+                    updated += 1
+                    self._push_undo({"type": "UPDATE", "table": stmt.table_name, "page_id": page_id, "index": idx, "old_data": old_data})
+
+                    # 关键修复：传递 old_data 和 new_data
+                    try:
+                        after_results = self._execute_triggers(stmt.table_name, "UPDATE", "AFTER", new_data=new_data, old_data=old_data)
+                        all_after_results.extend(after_results)
+                    except Exception as e:
+                        # 注意：如果AFTER触发器失败，理论上应回滚该行的更新
+                        return {"type": "UPDATE", "success": False, "message": f"AFTER UPDATE触发器失败: {e}"}
 
         return {
             "type": "UPDATE",
@@ -1548,12 +1538,8 @@ class SQLExecutor:
             "rows_updated": updated,
             "success": True,
             "message": f"成功更新 {updated} 行",
-            "trigger_results": {
-                "before": before_results,
-                "after": after_results
-            }
+            "trigger_results": { "before": all_before_results, "after": all_after_results }
         }
-
     def _execute_update(self, stmt: UpdateStatement) -> Dict[str, Any]:
         """执行UPDATE语句（兼容版本）"""
         return self._execute_update_with_undo(stmt)
@@ -1746,49 +1732,91 @@ class SQLExecutor:
                 "message": f"删除触发器失败: {str(e)}"
             }
 
-    def _execute_triggers(self, table_name: str, event: str, timing: str) -> List[Dict[str, Any]]:
-        """执行触发器"""
+    # 在 executor.py 文件中，找到并替换此函数
+    def _execute_triggers(self, table_name: str, event: str, timing: str, new_data: dict = None, old_data: dict = None) -> List[Dict[str, Any]]:
+        """执行指定事件和时机的触发器"""
         triggers = self.catalog.get_triggers_for_event(table_name, event, timing)
         results = []
-        
+
         for trigger in triggers:
+            trigger_key = f"{trigger['name']}_{table_name}_{event}_{timing}"
+
+            # 检测触发器递归
+            if trigger_key in self.txn._trigger_stack:
+                results.append({
+                    "trigger_name": trigger['name'],
+                    "success": False,
+                    "message": f"触发器递归检测: {trigger['name']} 已在执行栈中"
+                })
+                continue
+            # 将触发器添加到执行栈
+            self.txn._trigger_stack.append(trigger_key)
+
             try:
-                # 解析并执行触发器体
-                from sql.lexer import SQLLexer
-                from sql.parser import SQLParser
-                
-                # 添加分号确保语句完整
                 trigger_sql = trigger['statement']
+                # 替换 NEW.column（用正则，防止遗漏/大小写/空格等问题）
+                if new_data:
+                    for col, val in new_data.items():
+                        if val is None:
+                            sql_val = "NULL"
+                        elif isinstance(val, str):
+                            sql_val = f"'{str(val).replace(chr(39), chr(39)+chr(39))}'"
+                        else:
+                            sql_val = str(val)
+                        # \bNEW\s*\.\s*col\b 保证只替换完整单词（允许空格）
+                        trigger_sql = re.sub(rf'\bNEW\s*\.\s*{re.escape(col)}\b', sql_val, trigger_sql, flags=re.IGNORECASE)
+                if old_data:
+                    for col, val in old_data.items():
+                        if val is None:
+                            sql_val = "NULL"
+                        elif isinstance(val, str):
+                            sql_val = f"'{str(val).replace(chr(39), chr(39)+chr(39))}'"
+                        else:
+                            sql_val = str(val)
+                        trigger_sql = re.sub(rf'\bOLD\s*\.\s*{re.escape(col)}\b', sql_val, trigger_sql, flags=re.IGNORECASE)
+                
+                # 使用被替换后的SQL语句进行解析和执行
                 if not trigger_sql.endswith(';'):
                     trigger_sql += ';'
-                
+
+
+                from sql.lexer import SQLLexer
+                from sql.parser import SQLParser
                 lexer = SQLLexer(trigger_sql)
                 tokens = lexer.tokenize()
                 parser = SQLParser(tokens)
                 trigger_ast = parser.parse()
-                
-                # 递归执行触发器体
+
+                # 递归调用主执行器
                 result = self.execute(trigger_ast)
+                
                 results.append({
                     "trigger_name": trigger['name'],
                     "success": result.get("success", False),
                     "message": result.get("message", "")
                 })
-                
-                # 如果触发器执行失败，可以选择是否中断整个操作
+
                 if not result.get("success", False):
-                    print(f"警告: 触发器 {trigger['name']} 执行失败: {result.get('message', '')}")
-                    
+                    # 如果一个触发器失败，立即返回，中断主操作
+                    raise Exception(f"触发器 {trigger['name']} 执行失败: {result.get('message', '未知错误')}")
+
             except Exception as e:
-                results.append({
+                # 捕获异常并返回失败结果
+                failure_result = {
                     "trigger_name": trigger['name'],
                     "success": False,
                     "message": f"触发器执行异常: {str(e)}"
-                })
-                print(f"警告: 触发器 {trigger['name']} 执行异常: {str(e)}")
+                }
+                results.append(failure_result)
+                # 将异常向上抛出，以便主操作可以捕获它并失败
+                raise e
+            finally:
+                # 无论成功失败，都要从栈中移除触发器
+                if trigger_key in self.txn._trigger_stack:
+                    self.txn._trigger_stack.remove(trigger_key)
         
         return results
-
+    
     def _execute_alter_table(self, stmt):
         """执行ALTER TABLE ADD/DROP COLUMN"""
         if stmt.action == 'ADD':

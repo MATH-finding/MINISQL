@@ -8,7 +8,9 @@ from typing import Dict, Any, List
 def format_query_result(result: Dict[str, Any]):
     """格式化并打印查询结果"""
     if not result.get("success", True):
-        print(f"❌ 错误: {result.get('error', '未知错误')}")
+        # 优先显示message，其次error
+        msg = result.get("message") or result.get("error") or "未知错误"
+        print(f"❌ 错误: {msg}")
         return
 
     result_type = result.get("type", "UNKNOWN")
@@ -16,6 +18,8 @@ def format_query_result(result: Dict[str, Any]):
     if result_type == "SELECT":
         _format_select_result(result)
     elif result_type in ["CREATE_TABLE", "INSERT"]:
+        print(f"✅ {result.get('message', '操作成功')}")
+    elif result_type in ["CREATE_TRIGGER", "DROP_TRIGGER"]:
         print(f"✅ {result.get('message', '操作成功')}")
     else:
         print(f"✅ {result.get('message', '操作完成')}")

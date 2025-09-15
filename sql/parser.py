@@ -926,15 +926,21 @@ class SQLParser:
         
         # 触发器体（简化为单个SQL语句字符串）
         statement_tokens = []
-        while (self.current_token and 
-               self.current_token.type != TokenType.SEMICOLON and 
+        while (self.current_token and
+               self.current_token.type != TokenType.SEMICOLON and
                self.current_token.type != TokenType.EOF):
-            statement_tokens.append(self.current_token.value)
+            # 对于字符串类型的token，需要重新添加引号并转义内部引号
+            if self.current_token.type == TokenType.STRING:
+                # 转义字符串中的单引号
+                escaped_value = self.current_token.value.replace("'", "''")
+                statement_tokens.append(f"'{escaped_value}'")
+            else:
+                statement_tokens.append(self.current_token.value)
             self._advance()
-        
+
         if not statement_tokens:
             raise SyntaxError("触发器体不能为空")
-            
+
         statement = " ".join(statement_tokens)
         
         return CreateTriggerStatement(trigger_name, timing, event, table_name, statement)
