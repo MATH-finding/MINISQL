@@ -43,7 +43,31 @@ class DatabaseWebAPI:
         return session['session_id']
 
     def _get_db(self, session_id: Optional[str] = None) -> SimpleDatabase:
-        """获取数据库连接 - 改为单一连接"""
+        """获取数据库连接 - 支持多会话"""
+        if session_id:
+            # 为每个Web会话创建独立的数据库会话
+            if not hasattr(self, '_web_sessions'):
+                self._web_sessions = {}
+            
+            if not hasattr(self, '_user_selected_sessions'):
+                self._user_selected_sessions = {}
+            
+            if session_id not in self._web_sessions:
+                # 创建新的数据库会话
+                self._web_sessions[session_id] = self.db.new_session()
+            
+            # 检查用户是否通过 \session use 选择了特定会话
+            if session_id in self._user_selected_sessions:
+                # 使用用户选择的会话 - 确保真正切换
+                selected_session_id = self._user_selected_sessions[session_id]
+                success = self.db.use_session(selected_session_id)
+                if not success:
+                    # 如果切换失败，回退到默认会话
+                    self.db.use_session(self._web_sessions[session_id])
+            else:
+                # 使用默认的Web会话
+                self.db.use_session(self._web_sessions[session_id])
+        
         return self.db
 
     def _require_auth(self):
@@ -247,6 +271,118 @@ class DatabaseWebAPI:
 
         .btn-danger:hover {
             background: #b91c1c;
+        }
+
+        .btn-success {
+            background: var(--success-color);
+        }
+
+        .btn-success:hover {
+            background: #047857;
+        }
+
+        .btn-warning {
+            background: var(--warning-color);
+        }
+
+        .btn-warning:hover {
+            background: #b45309;
+        }
+
+        /* 事务管理样式 */
+        .transaction-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .transaction-status, .transaction-controls, .isolation-settings, .autocommit-settings, .session-management {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .status-info {
+            margin: 15px 0;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            font-weight: 600;
+            color: var(--neutral-700);
+        }
+
+        .control-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .control-group button {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .control-group button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .session-management {
+            grid-column: 1 / -1;
+        }
+
+        .sessions-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .sessions-table th,
+        .sessions-table td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #dee2e6;
+        }
+
+        .sessions-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        .sessions-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+
+        /* Shell命令样式 */
+        .shell-help {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+        }
+
+        .shell-help pre {
+            margin: 0;
+            color: #495057;
         }
 
         .btn-sm {
@@ -725,6 +861,7 @@ class DatabaseWebAPI:
             <div class="card">
                 <div class="tabs">
                     <div class="tab active" onclick="showTab('sql-tab')">SQL 查询</div>
+                    <div class="tab" onclick="showTab('transaction-tab')">事务管理</div>
                     <div class="tab" onclick="showTab('tables-tab')">表管理</div>
                     <div class="tab" onclick="showTab('views-tab')">视图管理</div>
                     <div class="tab" onclick="showTab('indexes-tab')">索引管理</div>
@@ -748,6 +885,83 @@ class DatabaseWebAPI:
                     </div>
 
                     <div id="sql-result"></div>
+                </div>
+
+                <!-- 事务管理标签页 -->
+                <div id="transaction-tab" class="tab-content">
+                    <div class="transaction-panel">
+                        <!-- 事务状态显示 -->
+                        <div class="transaction-status">
+                            <h3>事务状态</h3>
+                            <div id="transaction-status-info" class="status-info">
+                                <div class="status-item">
+                                    <span class="status-label">会话ID:</span>
+                                    <span id="session-id">-</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-label">自动提交:</span>
+                                    <span id="autocommit-status">-</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-label">事务状态:</span>
+                                    <span id="transaction-state">-</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-label">隔离级别:</span>
+                                    <span id="isolation-level">-</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-label">当前用户:</span>
+                                    <span id="current-user-txn">-</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">刷新状态</button>
+                        </div>
+
+                        <!-- 事务控制 -->
+                        <div class="transaction-controls">
+                            <h3>事务控制</h3>
+                            <div class="control-group">
+                                <button class="btn btn-success" onclick="beginTransaction()" id="begin-btn">开始事务</button>
+                                <button class="btn btn-warning" onclick="commitTransaction()" id="commit-btn" disabled>提交事务</button>
+                                <button class="btn btn-danger" onclick="rollbackTransaction()" id="rollback-btn" disabled>回滚事务</button>
+                            </div>
+                        </div>
+
+                        <!-- 隔离级别设置 -->
+                        <div class="isolation-settings">
+                            <h3>隔离级别设置</h3>
+                            <div class="form-group">
+                                <label for="isolation-select">选择隔离级别:</label>
+                                <select id="isolation-select" onchange="setIsolationLevel()">
+                                    <option value="READ UNCOMMITTED">READ UNCOMMITTED</option>
+                                    <option value="READ COMMITTED" selected>READ COMMITTED</option>
+                                    <option value="REPEATABLE READ">REPEATABLE READ</option>
+                                    <option value="SERIALIZABLE">SERIALIZABLE</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- 自动提交设置 -->
+                        <div class="autocommit-settings">
+                            <h3>自动提交设置</h3>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="autocommit-checkbox" onchange="setAutocommit()" checked>
+                                    启用自动提交
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 会话管理 -->
+                        <div class="session-management">
+                            <h3>会话管理</h3>
+                            <div class="action-bar">
+                                <button class="btn" onclick="loadSessions()">刷新会话列表</button>
+                            </div>
+                            <div id="sessions-list"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 表管理标签页 -->
@@ -928,8 +1142,42 @@ class DatabaseWebAPI:
                             if (result.message) html += `: ${result.message}`;
                             html += `</div>`;
 
+                            // 检查是否是Shell命令
+                            if (result.type === 'SHELL_COMMAND') {
+                                // 显示Shell命令结果
+                                if (result.data && result.data.length > 0) {
+                                    if (result.data[0].help) {
+                                        // 帮助命令
+                                        html += `<div class="shell-help"><pre>${result.data[0].help}</pre></div>`;
+                                    } else if (Array.isArray(result.data[0])) {
+                                        // 数组数据（如会话列表、表列表等）
+                                        html += '<div class="result-table"><table>';
+                                        html += '<thead><tr>';
+                                        Object.keys(result.data[0]).forEach(key => {
+                                            html += `<th>${key}</th>`;
+                                        });
+                                        html += '</tr></thead><tbody>';
+                                        result.data.forEach(item => {
+                                            html += '<tr>';
+                                            Object.values(item).forEach(value => {
+                                                html += `<td>${value}</td>`;
+                                            });
+                                            html += '</tr>';
+                                        });
+                                        html += '</tbody></table></div>';
+                                    } else {
+                                        // 对象数据
+                                        html += '<div class="result-table"><table>';
+                                        html += '<tbody>';
+                                        Object.entries(result.data[0]).forEach(([key, value]) => {
+                                            html += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
+                                        });
+                                        html += '</tbody></table></div>';
+                                    }
+                                }
+                            }
                             // 如果是SELECT查询，显示表格
-                            if (result.formatted && result.formatted.columns) {
+                            else if (result.formatted && result.formatted.columns) {
                                 html += '<div class="result-table"><table>';
 
                                 // 表头
@@ -1373,6 +1621,221 @@ class DatabaseWebAPI:
                         showMessage(resultEl, '获取统计信息失败: ' + error.message, true);
                     }
                 }
+
+                // ==================== 事务管理功能 ====================
+
+                // 刷新事务状态
+                async function refreshTransactionStatus() {
+                    try {
+                        console.log('正在刷新事务状态...');
+                        const response = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+                        console.log('事务状态响应:', result);
+
+                        if (result.success) {
+                            const data = result.data;
+                            document.getElementById('session-id').textContent = data.session_id || '-';
+                            document.getElementById('autocommit-status').textContent = data.autocommit ? '是' : '否';
+                            document.getElementById('transaction-state').textContent = data.in_transaction ? '进行中' : '未开始';
+                            document.getElementById('isolation-level').textContent = data.isolation_level || '-';
+                            document.getElementById('current-user-txn').textContent = data.current_user || '-';
+
+                            // 更新按钮状态
+                            const beginBtn = document.getElementById('begin-btn');
+                            const commitBtn = document.getElementById('commit-btn');
+                            const rollbackBtn = document.getElementById('rollback-btn');
+
+                            console.log('更新按钮状态，事务状态:', data.in_transaction);
+                            
+                            if (data.in_transaction) {
+                                beginBtn.disabled = true;
+                                commitBtn.disabled = false;
+                                rollbackBtn.disabled = false;
+                                console.log('禁用开始事务按钮');
+                            } else {
+                                beginBtn.disabled = false;
+                                commitBtn.disabled = true;
+                                rollbackBtn.disabled = true;
+                                console.log('启用开始事务按钮');
+                            }
+
+                            // 更新自动提交复选框
+                            document.getElementById('autocommit-checkbox').checked = data.autocommit;
+
+                            // 更新隔离级别选择
+                            const isolationSelect = document.getElementById('isolation-select');
+                            isolationSelect.value = data.isolation_level || 'READ COMMITTED';
+                        } else {
+                            console.error('获取事务状态失败:', result.message);
+                        }
+                    } catch (error) {
+                        console.error('获取事务状态失败:', error);
+                    }
+                }
+
+                // 开始事务
+                async function beginTransaction() {
+                    try {
+                        const response = await fetch('/api/transaction/begin', {
+                            method: 'POST',
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            showMessage(document.getElementById('transaction-status-info'), '事务已开始', false);
+                            refreshTransactionStatus();
+                        } else {
+                            showMessage(document.getElementById('transaction-status-info'), '开始事务失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(document.getElementById('transaction-status-info'), '开始事务失败: ' + error.message, true);
+                    }
+                }
+
+                // 提交事务
+                async function commitTransaction() {
+                    try {
+                        const response = await fetch('/api/transaction/commit', {
+                            method: 'POST',
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            showMessage(document.getElementById('transaction-status-info'), '事务已提交', false);
+                            refreshTransactionStatus();
+                        } else {
+                            showMessage(document.getElementById('transaction-status-info'), '提交事务失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(document.getElementById('transaction-status-info'), '提交事务失败: ' + error.message, true);
+                    }
+                }
+
+                // 回滚事务
+                async function rollbackTransaction() {
+                    try {
+                        const response = await fetch('/api/transaction/rollback', {
+                            method: 'POST',
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            showMessage(document.getElementById('transaction-status-info'), '事务已回滚', false);
+                            refreshTransactionStatus();
+                        } else {
+                            showMessage(document.getElementById('transaction-status-info'), '回滚事务失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(document.getElementById('transaction-status-info'), '回滚事务失败: ' + error.message, true);
+                    }
+                }
+
+                // 设置隔离级别
+                async function setIsolationLevel() {
+                    const level = document.getElementById('isolation-select').value;
+                    
+                    try {
+                        const response = await fetch('/api/transaction/isolation', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ level: level }),
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            showMessage(document.getElementById('transaction-status-info'), `隔离级别已设置为: ${level}`, false);
+                            refreshTransactionStatus();
+                        } else {
+                            showMessage(document.getElementById('transaction-status-info'), '设置隔离级别失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(document.getElementById('transaction-status-info'), '设置隔离级别失败: ' + error.message, true);
+                    }
+                }
+
+                // 设置自动提交
+                async function setAutocommit() {
+                    const enabled = document.getElementById('autocommit-checkbox').checked;
+                    
+                    try {
+                        const response = await fetch('/api/transaction/autocommit', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ enabled: enabled }),
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            showMessage(document.getElementById('transaction-status-info'), `自动提交已${enabled ? '启用' : '禁用'}`, false);
+                            refreshTransactionStatus();
+                        } else {
+                            showMessage(document.getElementById('transaction-status-info'), '设置自动提交失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(document.getElementById('transaction-status-info'), '设置自动提交失败: ' + error.message, true);
+                    }
+                }
+
+                // 加载会话列表
+                async function loadSessions() {
+                    const resultEl = document.getElementById('sessions-list');
+
+                    try {
+                        const response = await fetch('/api/sessions', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            let html = '<div class="alert alert-success">会话列表加载成功</div>';
+                            
+                            if (result.data && result.data.length > 0) {
+                                html += '<table class="sessions-table">';
+                                html += '<thead><tr><th>会话ID</th><th>自动提交</th><th>事务状态</th><th>隔离级别</th><th>当前会话</th></tr></thead><tbody>';
+                                
+                                result.data.forEach(session => {
+                                    html += '<tr>';
+                                    html += `<td>${session.session_id}</td>`;
+                                    html += `<td>${session.autocommit ? '是' : '否'}</td>`;
+                                    html += `<td>${session.in_txn ? '进行中' : '未开始'}</td>`;
+                                    html += `<td>${session.isolation}</td>`;
+                                    html += `<td>${session.current ? '是' : '否'}</td>`;
+                                    html += '</tr>';
+                                });
+                                
+                                html += '</tbody></table>';
+                            } else {
+                                html += '<p>暂无会话信息</p>';
+                            }
+                            
+                            resultEl.innerHTML = html;
+                        } else {
+                            showMessage(resultEl, '获取会话列表失败: ' + result.message, true);
+                        }
+                    } catch (error) {
+                        showMessage(resultEl, '获取会话列表失败: ' + error.message, true);
+                    }
+                }
                 
                 // 加载视图列表
                 async function loadViews() {
@@ -1628,6 +2091,16 @@ class DatabaseWebAPI:
                             login();
                         }
                     });
+
+                    // 页面加载完成后刷新事务状态
+                    setTimeout(() => {
+                        if (document.getElementById('transaction-status-info')) {
+                            refreshTransactionStatus();
+                        }
+                    }, 1000);
+                    
+                    // 添加调试信息
+                    console.log('页面加载完成，准备刷新事务状态');
                 });
             </script>
         </body>
@@ -1803,8 +2276,12 @@ class DatabaseWebAPI:
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
 
-                # 执行SQL
-                result = db.execute_sql(sql)
+                # 检查是否是Shell命令（以反斜杠开头）
+                if sql.strip().startswith('\\') or sql.strip().startswith('\\\\'):
+                    result = self._handle_shell_command(sql.strip(), db)
+                else:
+                    # 执行SQL
+                    result = db.execute_sql(sql)
 
                 # 确保返回格式正确
                 if not isinstance(result, dict):
@@ -2231,6 +2708,487 @@ class DatabaseWebAPI:
                 return jsonify({'success': ok})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
+
+        # ==================== 事务管理API ====================
+        
+        @self.app.route('/api/transaction/begin', methods=['POST'])
+        def begin_transaction():
+            """开始事务"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql("BEGIN")
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"开始事务失败: {e}")
+                return jsonify({'success': False, 'message': f'开始事务失败: {str(e)}'}), 500
+
+        @self.app.route('/api/transaction/commit', methods=['POST'])
+        def commit_transaction():
+            """提交事务"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql("COMMIT")
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"提交事务失败: {e}")
+                return jsonify({'success': False, 'message': f'提交事务失败: {str(e)}'}), 500
+
+        @self.app.route('/api/transaction/rollback', methods=['POST'])
+        def rollback_transaction():
+            """回滚事务"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql("ROLLBACK")
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"回滚事务失败: {e}")
+                return jsonify({'success': False, 'message': f'回滚事务失败: {str(e)}'}), 500
+
+        @self.app.route('/api/transaction/status', methods=['GET'])
+        def get_transaction_status():
+            """获取事务状态"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                
+                # 获取当前会话信息
+                sessions = db.list_sessions()
+                current_session = None
+                for s in sessions:
+                    if s['current']:
+                        current_session = s
+                        break
+                
+                if current_session:
+                    return jsonify({
+                        'success': True,
+                        'data': {
+                            'session_id': current_session['session_id'],
+                            'autocommit': current_session['autocommit'],
+                            'in_transaction': current_session['in_txn'],
+                            'isolation_level': current_session['isolation'],
+                            'current_user': session.get('username', 'unknown')
+                        }
+                    })
+                else:
+                    return jsonify({'success': False, 'message': '无法获取会话状态'}), 500
+
+            except Exception as e:
+                logger.error(f"获取事务状态失败: {e}")
+                return jsonify({'success': False, 'message': f'获取事务状态失败: {str(e)}'}), 500
+
+        @self.app.route('/api/transaction/isolation', methods=['POST'])
+        def set_isolation_level():
+            """设置隔离级别"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({'success': False, 'message': '请求数据格式错误'}), 400
+
+                level = data.get('level', '').strip().upper()
+                valid_levels = ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE']
+                
+                if level not in valid_levels:
+                    return jsonify({
+                        'success': False, 
+                        'message': f'无效的隔离级别。支持: {", ".join(valid_levels)}'
+                    }), 400
+
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql(f"SET SESSION TRANSACTION ISOLATION LEVEL {level}")
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"设置隔离级别失败: {e}")
+                return jsonify({'success': False, 'message': f'设置隔离级别失败: {str(e)}'}), 500
+
+        @self.app.route('/api/transaction/autocommit', methods=['POST'])
+        def set_autocommit():
+            """设置自动提交"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({'success': False, 'message': '请求数据格式错误'}), 400
+
+                enabled = data.get('enabled', True)
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                result = db.execute_sql(f"SET autocommit = {1 if enabled else 0}")
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"设置自动提交失败: {e}")
+                return jsonify({'success': False, 'message': f'设置自动提交失败: {str(e)}'}), 500
+
+        @self.app.route('/api/sessions', methods=['GET'])
+        def list_sessions():
+            """列出所有会话"""
+            auth_result = self._require_auth()
+            if auth_result:
+                return auth_result
+
+            try:
+                session_id = self._get_session_id()
+                db = self._get_db(session_id)
+                sessions = db.list_sessions()
+                
+                return jsonify({
+                    'success': True,
+                    'data': sessions
+                })
+
+            except Exception as e:
+                logger.error(f"获取会话列表失败: {e}")
+                return jsonify({'success': False, 'message': f'获取会话列表失败: {str(e)}'}), 500
+
+    def _handle_shell_command(self, command: str, db) -> dict:
+        """处理Shell命令"""
+        command = command.strip()
+        
+        # 会话管理命令
+        if command.startswith("\\session") or command.startswith("\\\\session"):
+            parts = command.split()
+            if len(parts) == 1 or parts[1] == "list":
+                return self._handle_session_list(db)
+            elif parts[1] == "new":
+                return self._handle_session_new(db)
+            elif parts[1] == "use" and len(parts) > 2:
+                session_id = int(parts[2])
+                return self._handle_session_use(session_id, db)
+            elif parts[1] in ["info", "status"]:
+                return self._handle_session_info(db)
+            else:
+                return {
+                    "success": False,
+                    "message": "用法: \\session [list|new|use <id>|info]",
+                    "data": []
+                }
+        
+        # 表管理命令
+        elif command.lower() in ["\\tables", "\\show tables", "\\\\tables", "\\\\show tables"]:
+            return self._handle_show_tables(db)
+        
+        # 视图管理命令
+        elif command.lower() in ["\\views", "\\show views", "\\\\views", "\\\\show views"]:
+            return self._handle_show_views(db)
+        
+        # 索引管理命令
+        elif command.lower() in ["\\indexes", "\\show indexes", "\\\\indexes", "\\\\show indexes"]:
+            return self._handle_show_indexes(db)
+        
+        # 统计信息命令
+        elif command.lower() in ["\\stats", "\\show stats", "\\\\stats", "\\\\show stats"]:
+            return self._handle_show_stats(db)
+        
+        # 用户管理命令
+        elif command.lower() in ["\\users", "\\\\users"]:
+            return self._handle_show_users(db)
+        
+        # 当前用户命令
+        elif command.lower() in ["\\whoami", "\\\\whoami"]:
+            return self._handle_whoami(db)
+        
+        # 帮助命令
+        elif command.lower() in ["\\help", "\\?", "\\\\help", "\\\\?"]:
+            return self._handle_help()
+        
+        else:
+            return {
+                "success": False,
+                "message": f"未知的Shell命令: {command}",
+                "data": []
+            }
+    
+    def _handle_session_list(self, db) -> dict:
+        """处理 \\session list 命令"""
+        try:
+            sessions = db.list_sessions()
+            return {
+                "success": True,
+                "message": f"当前会话列表 (共{len(sessions)}个会话)",
+                "data": sessions,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取会话列表失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_session_new(self, db) -> dict:
+        """处理 \\session new 命令"""
+        try:
+            new_session_id = db.new_session()
+            return {
+                "success": True,
+                "message": f"新会话已创建，会话ID: {new_session_id}",
+                "data": [{"new_session_id": new_session_id}],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"创建新会话失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_session_use(self, session_id: int, db) -> dict:
+        """处理 \\session use <id> 命令"""
+        try:
+            # 检查会话是否存在
+            sessions = db.list_sessions()
+            valid_session_ids = [s['id'] for s in sessions]
+            
+            if session_id not in valid_session_ids:
+                return {
+                    "success": False,
+                    "message": f"会话 {session_id} 不存在。可用会话: {valid_session_ids}",
+                    "data": [],
+                    "type": "SHELL_COMMAND"
+                }
+            
+            # 真正切换到目标会话
+            web_session_id = self._get_session_id()
+            if not hasattr(self, '_user_selected_sessions'):
+                self._user_selected_sessions = {}
+            self._user_selected_sessions[web_session_id] = session_id
+            
+            # 真正切换数据库会话
+            success = db.use_session(session_id)
+            if not success:
+                return {
+                    "success": False,
+                    "message": f"切换到会话 {session_id} 失败",
+                    "data": [],
+                    "type": "SHELL_COMMAND"
+                }
+            
+            # 获取目标会话的信息
+            target_session = next((s for s in sessions if s['id'] == session_id), None)
+            
+            return {
+                "success": True,
+                "message": f"已成功切换到会话 {session_id}。现在可以在此会话中开始事务。",
+                "data": [{
+                    "current_session_id": session_id,
+                    "session_info": target_session,
+                    "note": "Web环境中的会话切换是受限的，建议使用新标签页获得独立的会话"
+                }],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"选择会话失败: {str(e)}",
+                "data": [],
+                "type": "SHELL_COMMAND"
+            }
+    
+    def _handle_session_info(self, db) -> dict:
+        """处理 \\session info 命令"""
+        try:
+            sessions = db.list_sessions()
+            current_session = next((s for s in sessions if s["current"]), None)
+            
+            if current_session:
+                return {
+                    "success": True,
+                    "message": "当前会话信息",
+                    "data": [current_session],
+                    "type": "SHELL_COMMAND"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "无法获取当前会话信息",
+                    "data": []
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取会话信息失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_show_tables(self, db) -> dict:
+        """处理 \\tables 命令"""
+        try:
+            tables = db.list_tables()
+            return {
+                "success": True,
+                "message": f"数据库中的表 (共{len(tables)}个)",
+                "data": tables,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取表列表失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_show_views(self, db) -> dict:
+        """处理 \\views 命令"""
+        try:
+            views = db.list_views() if hasattr(db, "list_views") else []
+            return {
+                "success": True,
+                "message": f"数据库中的视图 (共{len(views)}个)",
+                "data": views,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取视图列表失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_show_indexes(self, db) -> dict:
+        """处理 \\indexes 命令"""
+        try:
+            if hasattr(db, 'list_all_indexes'):
+                indexes = db.list_all_indexes()
+                return {
+                    "success": True,
+                    "message": f"数据库中的索引 (共{len(indexes)}个)",
+                    "data": indexes,
+                    "type": "SHELL_COMMAND"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "索引功能不可用",
+                    "data": []
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取索引列表失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_show_stats(self, db) -> dict:
+        """处理 \\stats 命令"""
+        try:
+            stats = db.get_database_stats()
+            return {
+                "success": True,
+                "message": "数据库统计信息",
+                "data": [stats],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取统计信息失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_show_users(self, db) -> dict:
+        """处理 \\users 命令"""
+        try:
+            # 这里需要从catalog获取用户列表
+            users = list(db.catalog.users.keys()) if hasattr(db.catalog, 'users') else []
+            return {
+                "success": True,
+                "message": f"数据库用户列表 (共{len(users)}个)",
+                "data": users,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取用户列表失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_whoami(self, db) -> dict:
+        """处理 \\whoami 命令"""
+        try:
+            current_user = db.get_current_user()
+            return {
+                "success": True,
+                "message": f"当前登录用户: {current_user}",
+                "data": [{"current_user": current_user}],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取当前用户失败: {str(e)}",
+                "data": []
+            }
+    
+    def _handle_help(self) -> dict:
+        """处理 \\help 命令"""
+        help_text = """
+MiniSQL Shell 命令帮助:
+
+📋 会话管理:
+\\session list                    - 列出所有会话
+\\session new                     - 创建新会话
+\\session use <id>                - 选择指定会话 (Web环境受限)
+\\session info                    - 显示当前会话信息
+
+💡 Web环境提示:
+- 每个浏览器标签页有独立的数据库会话
+- 要使用不同会话，请打开新标签页
+- 会话切换在Web环境中是受限的
+
+📊 数据库管理:
+\\tables                          - 列出所有表
+\\views                           - 列出所有视图
+\\indexes                         - 列出所有索引
+\\stats                           - 显示数据库统计信息
+
+👥 用户管理:
+\\users                           - 列出所有用户
+\\whoami                          - 显示当前用户
+
+❓ 帮助:
+\\help 或 \\?                     - 显示此帮助信息
+
+💡 提示: 所有标准SQL语句也支持，如 SELECT, INSERT, UPDATE, DELETE 等
+        """
+        return {
+            "success": True,
+            "message": "Shell命令帮助",
+            "data": [{"help": help_text.strip()}],
+            "type": "SHELL_COMMAND"
+        }
 
     def _format_select_for_web(self, data: list) -> dict:
         """将SELECT结果格式化为适合前端展示的格式"""
