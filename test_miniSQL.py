@@ -214,7 +214,7 @@ class MiniSQLTester:
 
             # 唯一约束冲突
             result = self.execute_sql(
-                "INSERT INTO users VALUES (6, 'Test', 25, 'john@example.com', 5000.0, TRUE)"
+                "INSERT INTO users VALUES (6, 'Test', 40, 'john@example.com', 5000.0, TRUE)"
             )
             self.assert_test("唯一约束冲突应该失败", not result.get("success"))
 
