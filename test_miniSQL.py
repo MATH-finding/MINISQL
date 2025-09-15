@@ -4,10 +4,6 @@ MiniSQL 综合测试脚本 - 修复版本
 
 import sys
 import os
-import io
-
-# 设置UTF-8编码
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -343,13 +339,11 @@ class MiniSQLTester:
         # 验证删除结果
         result = self.execute_sql("SELECT COUNT(*) FROM users")
         actual_count = self.safe_get_count(result)
-        # 注意: 测试顺序可能影响用户总数，这里检查删除是否成功而不是具体数量
-        result_charlie = self.execute_sql("SELECT * FROM users WHERE name = 'Charlie Davis'")
-        charlie_exists = result_charlie.get("success") and len(result_charlie.get("data", [])) > 0
+        expected_count = 4  # 原来5个，删除1个
         self.assert_test(
             "验证DELETE结果",
-            not charlie_exists,
-            f"Charlie Davis应该被删除，当前用户总数: {actual_count}"
+            actual_count == expected_count,
+            f"期望{expected_count}条，实际{actual_count}条"
         )
 
     def test_index_operations(self):
@@ -635,12 +629,6 @@ class MiniSQLTester:
     def test_edge_cases(self):
         """测试边界情况"""
         print("\n=== 测试边界情况 ===")
-
-        # 先删除可能冲突的唯一索引，忽略错误
-        try:
-            self.execute_sql("DROP INDEX idx_user_id")
-        except:
-            pass  # 忽略删除索引的错误
 
         # 空字符串
         result = self.execute_sql(
