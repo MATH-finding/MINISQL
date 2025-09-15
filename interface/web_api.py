@@ -901,6 +901,27 @@ class DatabaseWebAPI:
                     return map[tabId] || '';
                 }
 
+                // 新增：辅助函数，用于渲染结果表格，避免代码重复
+                function renderTable(formattedData) {
+                    let html = '<div class="result-table"><table>';
+                    html += '<thead><tr>';
+                    formattedData.columns.forEach(col => {
+                        html += `<th>${col}</th>`;
+                    });
+                    html += '</tr></thead>';
+                    html += '<tbody>';
+                    formattedData.rows.forEach(row => {
+                        html += '<tr>';
+                        row.forEach(cell => {
+                            html += `<td>${cell}</td>`;
+                        });
+                        html += '</tr>';
+                    });
+                    html += '</tbody></table></div>';
+                    html += `<p style="margin-top: 8px; font-size: 13px; color: var(--neutral-500);">共 ${formattedData.total} 行记录</p>`;
+                    return html;
+                }
+
                 // 执行SQL
                 async function executeSql() {
                     const sql = document.getElementById('sql-input').value.trim();
@@ -922,43 +943,49 @@ class DatabaseWebAPI:
                         });
 
                         const result = await response.json();
+                        let finalHtml = '';
 
-                        if (result.success) {
+                        // 新增：处理多语句的返回结果
+                        if (result.results && Array.isArray(result.results)) {
+                            finalHtml += `<div class="alert alert-info">${result.message}</div>`;
+                            result.results.forEach((res, index) => {
+                                finalHtml += `<div style="border-top: 1px solid var(--neutral-200); margin-top: 1rem; padding-top: 1rem;">`;
+                                finalHtml += `<h4>语句 #${index + 1}</h4>`;
+                                if (res.success) {
+                                    let html = `<div class="alert alert-success">执行成功`;
+                                    if (res.message) html += `: ${res.message}`;
+                                    html += `</div>`;
+                                    if (res.formatted && res.formatted.columns) {
+                                       html += renderTable(res.formatted);
+                                    }
+                                    finalHtml += html;
+                                } else {
+                                    finalHtml += `<div class="alert alert-error">${res.message || '执行失败'}</div>`;
+                                }
+                                finalHtml += `</div>`;
+                            });
+                        } 
+                        // 兼容处理单语句的返回结果
+                        else if (result.success) {
                             let html = `<div class="alert alert-success">执行成功`;
                             if (result.message) html += `: ${result.message}`;
                             html += `</div>`;
-
-                            // 如果是SELECT查询，显示表格
                             if (result.formatted && result.formatted.columns) {
-                                html += '<div class="result-table"><table>';
-
-                                // 表头
-                                html += '<thead><tr>';
-                                result.formatted.columns.forEach(col => {
-                                    html += `<th>${col}</th>`;
-                                });
-                                html += '</tr></thead>';
-
-                                // 数据行
-                                html += '<tbody>';
-                                result.formatted.rows.forEach(row => {
-                                    html += '<tr>';
-                                    row.forEach(cell => {
-                                        html += `<td>${cell}</td>`;
-                                    });
-                                    html += '</tr>';
-                                });
-                                html += '</tbody></table></div>';
-
-                                html += `<p><small>共 ${result.formatted.total} 行记录</small></p>`;
+                                html += renderTable(result.formatted);
                             }
-
-                            resultEl.innerHTML = html;
+                            finalHtml = html;
                         } else {
+                            // 处理单语句执行失败的情况
                             showMessage(resultEl, result.message || '执行失败', true);
+                            return; 
                         }
+                        
+                        resultEl.innerHTML = finalHtml;
+                        
                     } catch (error) {
                         showMessage(resultEl, '请求失败: ' + error.message, true);
+                    }finally {
+                        document.getElementById('execute-loading').style.display = 'none';
                     }
                 }
 
@@ -1004,6 +1031,8 @@ class DatabaseWebAPI:
                             }
 
                             resultEl.innerHTML = html;
+                            // 保持搜索框已有关键字的过滤效果
+                            filterTables();
                         } else {
                             showMessage(resultEl, result.message, true);
                         }
@@ -1335,6 +1364,7 @@ class DatabaseWebAPI:
                             }
 
                             resultEl.innerHTML = html;
+                            filterViews();
                         } else {
                             showMessage(resultEl, result.message, true);
                         }
@@ -1559,6 +1589,37 @@ class DatabaseWebAPI:
                     event.target.style.borderBottomColor = '#667eea';
                     document.getElementById(tabName + '-content').style.display = 'block';
                 }
+                
+                function normalizeText(str) {
+    return (str || '').toString().trim().toLowerCase();
+}
+
+                function filterTables() {
+                    const keyword = normalizeText(document.getElementById('table-search')?.value);
+                    const tbody = document.querySelector('#tables-result tbody');
+                    if (!tbody) return;
+                    const rows = tbody.querySelectorAll('tr');
+                    rows.forEach(row => {
+                        const nameCell = row.querySelector('td:first-child');
+                        const name = normalizeText(nameCell?.textContent);
+                        const match = !keyword || name.includes(keyword);
+                        row.style.display = match ? '' : 'none';
+                    });
+                }
+                
+                function filterViews() {
+                    const keyword = normalizeText(document.getElementById('view-search')?.value);
+                    const tbody = document.querySelector('#views-result tbody');
+                    if (!tbody) return;
+                    const rows = tbody.querySelectorAll('tr');
+                    rows.forEach(row => {
+                        const nameCell = row.querySelector('td:first-child');
+                        const name = normalizeText(nameCell?.textContent);
+                        const match = !keyword || name.includes(keyword);
+                        row.style.display = match ? '' : 'none';
+                    });
+                }
+
                 
                 // 快速预览视图数据
                 async function previewViewData(viewName) {
@@ -1794,38 +1855,65 @@ class DatabaseWebAPI:
                     }), 400
 
                 sql = data.get('sql', '').strip()
+                # 将常见的不可见非中断空格(U+00A0)替换为标准空格，然后去除首尾空白
+                sql = sql.replace('\u00A0', ' ').strip()
+
                 if not sql:
                     return jsonify({
                         'success': False,
                         'message': 'SQL语句不能为空'
                     }), 400
+                
+                # --- 综合修复：自动清理和校正常见的输入问题 ---
+                # 1. 将不可见的非中断空格(U+00A0)替换为标准空格
+                sql = sql.replace('\u00A0', ' ')
+                # 2. 自动将所有中文（全角）分号替换为英文（半角）分号
+                sql = sql.replace('；', ';')
+                # 3. 最后，清理整个语句块首尾的空白字符
+                sql = sql.strip()
+                # --- 修复结束 ---
 
+            
+                # 按分号分割语句，并过滤空语句
+                stmts = [s.strip() for s in sql.split(';') if s.strip()]
+                if not stmts:
+                    return jsonify({'success': False, 'message': '未找到有效的SQL语句'}), 400
+
+                all_results = []
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
 
-                # 执行SQL
-                result = db.execute_sql(sql)
+                for stmt in stmts:
+                    # 执行器需要以分号结尾
+                    full_stmt = stmt + ';'
+                    result = db.execute_sql(full_stmt)
 
-                # 确保返回格式正确
-                if not isinstance(result, dict):
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'message': '执行结果格式错误'}
+
+                    if 'success' not in result:
+                        result['success'] = True
+
+                    # 格式化SELECT查询结果
+                    if (result.get('success') and
+                        result.get('type') == 'SELECT' and
+                        'data' in result and
+                        isinstance(result['data'], list)):
+                        result['formatted'] = self._format_select_for_web(result['data'])
+                    
+                    all_results.append(result)
+
+                # 如果只有一条语句，为保持兼容性，直接返回结果
+                if len(all_results) == 1:
+                    return jsonify(all_results[0])
+                else:
+                    # 如果是多条语句，将结果封装后返回
                     return jsonify({
-                        'success': False,
-                        'message': '执行结果格式错误',
-                        'error': 'INVALID_RESULT_FORMAT'
-                    }), 500
-
-                # 补充可能缺失的字段
-                if 'success' not in result:
-                    result['success'] = True
-
-                # 格式化SELECT查询结果
-                if (result.get('success') and
-                    result.get('type') == 'SELECT' and
-                    'data' in result and
-                    isinstance(result['data'], list)):
-                    result['formatted'] = self._format_select_for_web(result['data'])
-
-                return jsonify(result)
+                        'success': True,
+                        'message': f'成功执行 {len(all_results)} 条语句。',
+                        'results': all_results
+                    })
+          
 
             except Exception as e:
                 logger.error(f"SQL执行错误: {e}")

@@ -549,19 +549,23 @@ class SQLExecutor:
             # 插入前校验所有唯一性约束
             for index in unique_indexes:
                 index_keys = [record_data.get(col) for col in index.columns]
+                print(f"[DEBUG] 唯一性检测: index={index.name}, columns={index.columns}, keys={index_keys}")
                 if all(key is not None for key in index_keys):
                     if hasattr(self.index_manager, 'lookup'):
                         existing = self.index_manager.lookup(index.name, index_keys)
+                        print(f"[DEBUG] 索引管理器lookup: existing={existing}")
                     else:
                         # 简化的唯一性检查：扫描表
                         all_records = self.table_manager.scan_table(stmt.table_name)
+                        print(f"[DEBUG] 扫描表记录数: {len(all_records)}")
                         existing = any(
                             all(record.data.get(col) == key for col, key in zip(index.columns, index_keys))
                             for record in all_records
                         )
-                    
+                        print(f"[DEBUG] 扫描表唯一性检测: existing={existing}")
                     if existing:
                         constraint_columns = ", ".join(index.columns)
+                        print(f"[DEBUG] 唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在")
                         raise ValueError(
                             f"唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在"
                         )
@@ -611,12 +615,18 @@ class SQLExecutor:
                 record_id = (page_id, ridx)
             else:
                 # 直接用insert_record返回(page_id, ridx)
-                page_id, ridx = self.table_manager.insert_record(stmt.table_name, record_data)
-                record_id = (page_id, ridx)
+                result = self.table_manager.insert_record(stmt.table_name, record_data)
+                if isinstance(result, tuple) and len(result) == 2:
+                    page_id, ridx = result
+                    record_id = (page_id, ridx)
+                else:
+                    page_id, ridx = None, None
+                    record_id = result
 
-            # 索引维护
+            # 索引维护（无论record_id为何都尝试写入索引，便于调试）
             if self.index_manager:
                 if hasattr(self.index_manager, 'insert_into_indexes'):
+                    print(f"[DEBUG] 调用insert_into_indexes: table={stmt.table_name}, record_data={record_data}, record_id={record_id}")
                     self.index_manager.insert_into_indexes(stmt.table_name, record_data, record_id)
                 else:
                     # 兼容老版本索引管理器
@@ -627,6 +637,7 @@ class SQLExecutor:
                             btree = self.index_manager.get_index(index_name)
                             if btree:
                                 key = record_data[index_info.column_name]
+                                print(f"[DEBUG] 兼容索引写入: index={index_name}, key={key}, record_id={record_id}")
                                 btree.insert(key, record_id)
 
             # 若在事务中，记录补偿删除的 Undo
@@ -925,10 +936,23 @@ class SQLExecutor:
             # 插入前校验所有唯一性约束
             for index in unique_indexes:
                 index_keys = [record_data.get(col) for col in index.columns]
+                print(f"[DEBUG] 唯一性检测: index={index.name}, columns={index.columns}, keys={index_keys}")
                 if all(key is not None for key in index_keys):
-                    existing = self.index_manager.lookup(index.name, index_keys)
+                    if hasattr(self.index_manager, 'lookup'):
+                        existing = self.index_manager.lookup(index.name, index_keys)
+                        print(f"[DEBUG] 索引管理器lookup: existing={existing}")
+                    else:
+                        # 简化的唯一性检查：扫描表
+                        all_records = self.table_manager.scan_table(stmt.table_name)
+                        print(f"[DEBUG] 扫描表记录数: {len(all_records)}")
+                        existing = any(
+                            all(record.data.get(col) == key for col, key in zip(index.columns, index_keys))
+                            for record in all_records
+                        )
+                        print(f"[DEBUG] 扫描表唯一性检测: existing={existing}")
                     if existing:
                         constraint_columns = ", ".join(index.columns)
+                        print(f"[DEBUG] 唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在")
                         raise ValueError(
                             f"唯一约束冲突: 列 '{constraint_columns}' 的值 '{index_keys}' 已存在"
                         )
