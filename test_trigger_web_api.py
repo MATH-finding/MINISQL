@@ -60,39 +60,33 @@ class TriggerWebAPITest:
         
         url = f"{self.base_url}/api/triggers"
         
-        # 测试数据
-        triggers = [
-            {
-                "trigger_name": "api_trg_before_insert",
-                "timing": "BEFORE",
-                "event": "INSERT",
-                "table_name": "api_test_users",
-                "statement": "INSERT INTO api_test_logs VALUES (1, 'before insert')"
-            },
-            {
-                "trigger_name": "api_trg_after_insert",
-                "timing": "AFTER", 
-                "event": "INSERT",
-                "table_name": "api_test_users",
-                "statement": "INSERT INTO api_test_logs VALUES (2, 'after insert')"
-            },
-            {
-                "trigger_name": "api_trg_before_update",
-                "timing": "BEFORE",
-                "event": "UPDATE", 
-                "table_name": "api_test_users",
-                "statement": "INSERT INTO api_test_logs VALUES (3, 'before update')"
-            }
+        # --- 修改开始 ---
+        # 1. 将触发器定义改为完整的SQL语句列表
+        triggers_sql = [
+            "CREATE TRIGGER api_trg_before_insert BEFORE INSERT ON api_test_users FOR EACH ROW INSERT INTO api_test_logs VALUES (1, 'before_insert');",
+            "CREATE TRIGGER api_trg_after_insert AFTER INSERT ON api_test_users FOR EACH ROW INSERT INTO api_test_logs VALUES (2, 'after_insert');",
+            "CREATE TRIGGER api_trg_before_update BEFORE UPDATE ON api_test_users FOR EACH ROW INSERT INTO api_test_logs VALUES (3, 'before_update');"
         ]
         
-        for trigger_data in triggers:
-            response = self.session.post(url, json=trigger_data)
+        # 2. 修改循环，发送符合新API要求的JSON
+        for sql in triggers_sql:
+            # 从SQL语句中提取触发器名称，用于打印日志
+            try:
+                trigger_name = sql.split()[2]
+            except IndexError:
+                trigger_name = "未知"
+
+            # 构造正确的请求体
+            payload = {'sql': sql}
+            
+            response = self.session.post(url, json=payload)
             result = response.json()
             
             if result.get('success'):
-                print(f"✅ 触发器 {trigger_data['trigger_name']} 创建成功")
+                print(f"✅ 触发器 {trigger_name} 创建成功")
             else:
-                print(f"❌ 触发器 {trigger_data['trigger_name']} 创建失败: {result.get('message', '')}")
+                print(f"❌ 触发器 {trigger_name} 创建失败: {result.get('message', '')}")
+        # --- 修改结束 ---
     
     def test_list_triggers(self):
         """测试获取触发器列表"""
@@ -211,47 +205,39 @@ class TriggerWebAPITest:
         else:
             print(f"❌ 触发器 {trigger_name} 删除失败: {result.get('message', '')}")
     
+   # 定位到 test_trigger_web_api.py 文件，用下面的函数完整替换现有的 test_error_cases 函数
     def test_error_cases(self):
         """测试错误情况"""
         print("\n测试错误情况...")
         
-        # 1. 创建重复触发器
-        print("1. 测试创建重复触发器...")
         url = f"{self.base_url}/api/triggers"
         
-        duplicate_trigger = {
-            "trigger_name": "duplicate_trigger",
-            "timing": "BEFORE",
-            "event": "INSERT",
-            "table_name": "api_test_users",
-            "statement": "INSERT INTO api_test_logs VALUES (99, 'duplicate')"
-        }
+        # 1. 创建重复触发器
+        print("1. 测试创建重复触发器...")
+        # --- 修改：使用新的 'sql' 格式 ---
+        sql_duplicate = "CREATE TRIGGER duplicate_trigger BEFORE INSERT ON api_test_users FOR EACH ROW INSERT INTO api_test_logs VALUES (99, 'duplicate_msg');"
+        payload_duplicate = {'sql': sql_duplicate}
         
         # 创建第一次
-        response1 = self.session.post(url, json=duplicate_trigger)
+        response1 = self.session.post(url, json=payload_duplicate)
         result1 = response1.json()
         
         # 创建第二次（应该失败）
-        response2 = self.session.post(url, json=duplicate_trigger)
+        response2 = self.session.post(url, json=payload_duplicate)
         result2 = response2.json()
         
         if result1.get('success') and not result2.get('success'):
             print("✅ 重复创建触发器正确被拒绝")
         else:
-            print("❌ 重复创建触发器测试失败")
+            print(f"❌ 重复创建触发器测试失败 - res1: {result1.get('message')}, res2: {result2.get('message')}")
         
         # 2. 在不存在的表上创建触发器
         print("2. 测试在不存在的表上创建触发器...")
+        # --- 修改：使用新的 'sql' 格式 ---
+        sql_invalid = "CREATE TRIGGER invalid_table_trigger BEFORE INSERT ON nonexistent_table FOR EACH ROW INSERT INTO api_test_logs VALUES (98, 'invalid_msg');"
+        payload_invalid = {'sql': sql_invalid}
         
-        invalid_trigger = {
-            "trigger_name": "invalid_table_trigger",
-            "timing": "BEFORE",
-            "event": "INSERT", 
-            "table_name": "nonexistent_table",
-            "statement": "INSERT INTO api_test_logs VALUES (98, 'invalid')"
-        }
-        
-        response = self.session.post(url, json=invalid_trigger)
+        response = self.session.post(url, json=payload_invalid)
         result = response.json()
         
         if not result.get('success'):
@@ -262,8 +248,8 @@ class TriggerWebAPITest:
         # 3. 获取不存在的触发器详情
         print("3. 测试获取不存在的触发器详情...")
         
-        url = f"{self.base_url}/api/triggers/nonexistent_trigger"
-        response = self.session.get(url)
+        url_nonexistent = f"{self.base_url}/api/triggers/nonexistent_trigger"
+        response = self.session.get(url_nonexistent)
         
         if response.status_code == 404:
             print("✅ 获取不存在的触发器正确返回404")
@@ -273,8 +259,7 @@ class TriggerWebAPITest:
         # 4. 删除不存在的触发器
         print("4. 测试删除不存在的触发器...")
         
-        url = f"{self.base_url}/api/triggers/nonexistent_trigger"
-        response = self.session.delete(url)
+        response = self.session.delete(url_nonexistent)
         result = response.json()
         
         if not result.get('success'):
@@ -285,15 +270,14 @@ class TriggerWebAPITest:
         # 5. 使用IF EXISTS删除不存在的触发器
         print("5. 测试使用IF EXISTS删除不存在的触发器...")
         
-        url = f"{self.base_url}/api/triggers/nonexistent_trigger?if_exists=true"
-        response = self.session.delete(url)
+        url_if_exists = f"{url_nonexistent}?if_exists=true"
+        response = self.session.delete(url_if_exists)
         result = response.json()
         
         if result.get('success'):
             print("✅ 使用IF EXISTS删除不存在的触发器成功")
         else:
             print("❌ 使用IF EXISTS删除不存在的触发器应该成功")
-    
     def cleanup(self):
         """清理测试数据"""
         print("\n清理测试数据...")
@@ -387,15 +371,14 @@ def test_api_with_curl():
   -c cookies.txt""")
     
     print("\n2. 创建触发器:")
+    # 将原本分散的字段，合并成一个完整的SQL语句，并通过'sql'字段提交
+    create_sql = "CREATE TRIGGER test_trigger BEFORE INSERT ON test_table FOR EACH ROW INSERT INTO log_table VALUES (1, 'test');"
+    
     print(f"""curl -X POST {base_url}/api/triggers \\
   -H "Content-Type: application/json" \\
   -b cookies.txt \\
   -d '{{
-    "trigger_name": "test_trigger",
-    "timing": "BEFORE", 
-    "event": "INSERT",
-    "table_name": "test_table",
-    "statement": "INSERT INTO log_table VALUES (1, \\"test\\");"
+    "sql": "{create_sql}"
   }}'""")
     
     print("\n3. 获取触发器列表:")

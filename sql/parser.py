@@ -931,7 +931,13 @@ class SQLParser:
         while (self.current_token and
                self.current_token.type != TokenType.SEMICOLON and
                self.current_token.type != TokenType.EOF):
-            statement_tokens.append(self.current_token.value)
+            # 对于字符串类型的token，需要重新添加引号并转义内部引号
+            if self.current_token.type == TokenType.STRING:
+                # 转义字符串中的单引号
+                escaped_value = self.current_token.value.replace("'", "''")
+                statement_tokens.append(f"'{escaped_value}'")
+            else:
+                statement_tokens.append(self.current_token.value)
             self._advance()
 
         if not statement_tokens:

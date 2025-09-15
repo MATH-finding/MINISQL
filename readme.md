@@ -115,6 +115,7 @@ simple_database/
 │   └── executor.py          # SQL执行器
 │   ├── semantic.py          # 语义分析
 │   └──diagnostics.py        # 智能纠错
+    └──transation_state.py   #事务
 └── interface/                # 接口层
     ├── __init__.py
     ├── database.py          # 数据库主接口
