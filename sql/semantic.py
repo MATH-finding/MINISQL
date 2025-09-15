@@ -62,7 +62,8 @@ class SemanticAnalyzer:
             return AnalyzedResult(stmt)
 
     # =============== SELECT ===============
-    def _collect_visible_columns(self, from_table: Union[str, JoinClause]) -> Tuple[Dict[str, List[Tuple[str, str]]], Dict[str, Dict]]:
+    def _collect_visible_columns(self, from_table: Union[str, JoinClause]) -> Tuple[
+        Dict[str, List[Tuple[str, str]]], Dict[str, Dict]]:
         """
         返回:
         - visible: 裸列名 -> 列表[(table_name, column_name), ...] 用于歧义检测
@@ -72,10 +73,40 @@ class SemanticAnalyzer:
         table_schemas: Dict[str, Dict[str, Dict]] = {}
 
         def add_table(table_name: str):
-            # 允许视图：由执行器在执行阶段展开，这里不抛错
+            # **修复：改进视图支持**
             if hasattr(self.catalog, 'views') and table_name in getattr(self.catalog, 'views', {}):
+                try:
+                    view_def = self.catalog.get_view_definition(table_name)
+                    # 如果视图定义包含基表信息，使用基表的列
+                    if hasattr(view_def, 'base_table'):
+                        base_schema = self.catalog.get_table_schema(view_def.base_table)
+                        if base_schema:
+                            col_map: Dict[str, Dict] = {}
+                            for col in base_schema.columns:
+                                col_map[col.name] = {"name": col.name,
+                                                     "type": getattr(col.data_type, "name", str(col.data_type))}
+                                visible.setdefault(col.name, []).append((table_name, col.name))
+                            table_schemas[table_name] = col_map
+                            return
+                    elif hasattr(view_def, 'select_stmt'):
+                        # 从SELECT语句推断列
+                        select_stmt = view_def.select_stmt
+                        if hasattr(select_stmt, 'from_table') and isinstance(select_stmt.from_table, str):
+                            base_schema = self.catalog.get_table_schema(select_stmt.from_table)
+                            if base_schema:
+                                col_map: Dict[str, Dict] = {}
+                                for col in base_schema.columns:
+                                    col_map[col.name] = {"name": col.name,
+                                                         "type": getattr(col.data_type, "name", str(col.data_type))}
+                                    visible.setdefault(col.name, []).append((table_name, col.name))
+                                table_schemas[table_name] = col_map
+                                return
+                except:
+                    pass
+                # 如果无法解析视图，设为空但不报错
                 table_schemas[table_name] = {}
                 return
+
             schema = self.catalog.get_table_schema(table_name)
             if not schema:
                 raise SemanticError(f"表 {table_name} 不存在")

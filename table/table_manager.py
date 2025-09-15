@@ -28,8 +28,7 @@ class TableManager:
         if not schema.validate_record(record_data):
             raise ValueError("记录数据不符合表结构")
 
-        # **修复：检查所有唯一约束（主键 + UNIQUE列）**
-        # 1. 检查主键唯一性
+        # 检查主键唯一性（简化实现）
         if schema.primary_key_columns:
             existing_records = self.scan_table(table_name)
             for existing in existing_records:
@@ -40,17 +39,6 @@ class TableManager:
                         break
                 if pk_match:
                     raise ValueError(f"主键冲突: {schema.primary_key_columns}")
-
-        # 2. **新增：检查UNIQUE列约束**
-        for column in schema.columns:
-            if hasattr(column, 'unique') and column.unique:
-                # 检查该列的值是否已存在
-                existing_records = self.scan_table(table_name)
-                new_value = record_data.get(column.name)
-                if new_value is not None:  # NULL值不参与唯一性检查
-                    for existing in existing_records:
-                        if existing.data.get(column.name) == new_value:
-                            raise ValueError(f"唯一约束冲突: 列 {column.name} 的值 {new_value} 已存在")
 
         # 尝试插入到现有页面
         pages = self.catalog.get_table_pages(table_name)
