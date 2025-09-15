@@ -28,10 +28,11 @@ class TableManager:
         if not schema.validate_record(record_data):
             raise ValueError("记录数据不符合表结构")
 
-        # **修复：检查所有唯一约束（主键 + UNIQUE列）**
+        # **修复：获取所有现有记录进行唯一性检查**
+        existing_records = self.scan_table(table_name)
+
         # 1. 检查主键唯一性
         if schema.primary_key_columns:
-            existing_records = self.scan_table(table_name)
             for existing in existing_records:
                 pk_match = True
                 for pk_col in schema.primary_key_columns:
@@ -41,11 +42,9 @@ class TableManager:
                 if pk_match:
                     raise ValueError(f"主键冲突: {schema.primary_key_columns}")
 
-        # 2. **新增：检查UNIQUE列约束**
+        # 2. **修复：检查UNIQUE列约束**
         for column in schema.columns:
             if hasattr(column, 'unique') and column.unique:
-                # 检查该列的值是否已存在
-                existing_records = self.scan_table(table_name)
                 new_value = record_data.get(column.name)
                 if new_value is not None:  # NULL值不参与唯一性检查
                     for existing in existing_records:
@@ -88,17 +87,28 @@ class TableManager:
         return len(self.scan_table(table_name))
 
     def delete_records(self, table_name: str, condition_func=None) -> int:
-        """删除符合条件的记录（简化实现）"""
-        # 真实数据库会有更高效的删除机制
+        """删除符合条件的记录"""
         deleted_count = 0
         pages = self.catalog.get_table_pages(table_name)
 
         for page_id in pages:
             records = self.record_manager.get_records(page_id)
-            for i, record in enumerate(records):
+            # **修复：从后往前删除，避免索引偏移问题**
+            for i in range(len(records) - 1, -1, -1):
+                record = records[i]
                 if condition_func is None or condition_func(record.data):
-                    if self.record_manager.delete_record(page_id, i):
-                        deleted_count += 1
+                    # **修复：使用正确的记录索引删除**
+                    # 需要通过get_records_with_indices获取真实的record_index
+                    records_with_indices = self.record_manager.get_records_with_indices(page_id)
+                    actual_record_index = None
+                    for idx, rec in records_with_indices:
+                        if rec.data == record.data:
+                            actual_record_index = idx
+                            break
+
+                    if actual_record_index is not None:
+                        if self.record_manager.delete_record(page_id, actual_record_index):
+                            deleted_count += 1
 
         return deleted_count
 
@@ -238,3 +248,19 @@ class TableManager:
         """按位置更新一条记录。"""
         new_record = Record(new_data)
         return self.record_manager.update_record(page_id, record_index, new_record)
+
+
+    def _get_valid_records(self, table_name: str) -> List[Record]:
+        """获取表中的有效记录（排除已删除记录）"""
+        all_records = []
+        pages = self.catalog.get_table_pages(table_name)
+
+        for page_id in pages:
+            records_with_indices = self.record_manager.get_records_with_indices(page_id)
+            for record_index, record in records_with_indices:
+                # 过滤掉已删除的记录（offset=-1表示已删除）
+                if hasattr(record, 'offset') and record.offset == -1:
+                    continue
+                all_records.append(record)
+
+        return all_records
