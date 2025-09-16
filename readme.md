@@ -1,93 +1,80 @@
-# MiniSQL 数据库系统
+# MiniSQL
 
-## 新特性 - B+树索引
+一个功能完整的关系型数据库管理系统，采用Python实现，支持标准SQL语法、事务管理、B+树索引、智能补全等企业级特性。
 
-拓展：1. 查询优化器 2. 并发控制 3. 高级索引 4. 数据压缩 5. 分区表 6.可视化
+## 项目特性
 
-### 索引操作
-- `CREATE INDEX index_name ON table_name (column_name)` - 创建普通索引
-- `CREATE UNIQUE INDEX index_name ON table_name (column_name)` - 创建唯一索引
-- `DROP INDEX index_name` - 删除索引
+### 核心功能
 
-### 性能优化
-- SELECT查询会自动使用索引加速
-- INSERT/UPDATE操作会自动维护索引
-- 支持等值查询和范围查询优化
+* **完整SQL支持** - DDL、DML、DCL语句全覆盖
+* **ACID事务** - 支持四种隔离级别和完整的事务管理
+* **B+树索引** - 高效的数据检索和范围查询
+* **智能补全** - SQL关键字、表名、列名自动补全
+* **用户权限管理** - 完整的认证授权体系
+* **视图和触发器** - 支持虚拟表和事件驱动逻辑
 
-### 使用示例
-```sql
--- 创建表
-CREATE TABLE users (id INTEGER PRIMARY KEY, email VARCHAR(100), age INTEGER);
+### 架构特色
 
--- 创建索引
-CREATE INDEX idx_user_age ON users (age);
-CREATE UNIQUE INDEX idx_user_email ON users (email);
+* **分层架构** - SQL处理、存储引擎、目录管理、接口层清晰分离
+* **LRU缓存** - 智能页面缓存管理，提升查询性能
+* **语义分析** - 深度的SQL语义检查和类型推断
+* **多接口支持** - 命令行界面和现代化Web界面
 
--- 查询会自动使用索引
-SELECT * FROM users WHERE age = 25;
-SELECT * FROM users WHERE email = 'user@example.com';
+## 快速开始
 
-📋 功能特性
-✅ 已实现功能
-存储管理: 4KB固定页面大小，支持页面分配和回收
+### 环境要求
 
-缓存管理: LRU缓存策略，提高I/O性能
+* Python 3.7+
+* 依赖库：Flask>=2.0.0, prompt\_toolkit
 
-数据类型: INTEGER, VARCHAR, FLOAT, BOOLEAN, CHAR
-        DECIMAL, DATE, TIME, DATETIME, BIGINT
-        TINYINT, TEXT
+### 安装依赖
 
-SQL支持: CREATE TABLE, INSERT, SELECT
+```bash
+pip install -r requirements.txt
+```
 
-约束支持: PRIMARY KEY, NOT NULL
+### 运行方式
 
-条件查询: WHERE子句，支持AND/OR逻辑运算
+#### 1. 命令行交互模式
 
-事务管理: 事务回滚
+```bash
+python main.py shell
+```
 
-系统目录: 元数据管理，持久化表结构
+启动交互式SQL命令行，支持：
 
-交互式Shell: 友好的命令行接口
+* 智能SQL补全和语法高亮
+* 多行SQL输入
+* 事务状态实时显示
+* 内置演示系统
 
-🚧 计划功能
-UPDATE, DELETE语句
+#### 2. Web管理界面
 
-索引支持（B+树）
+```bash
+python main.py web
+```
 
-事务管理
+启动Web服务器（默认端口5000），提供：
 
-连接查询（JOIN）
+* 现代化的数据库管理界面
+* 实时SQL编辑器和执行
+* 表数据浏览和管理
+* 事务和会话管理
+* 响应式设计，支持移动端
 
-聚合函数（COUNT, SUM, AVG等）
+访问地址：[http://localhost:5000](http://localhost:5000)
 
-更多数据类型支持
+#### 3. 其他运行模式
 
-🏗️ 系统架构
-scss
-复制
-┌─────────────────────────────────────┐
-│          SQL Shell (交互层)          │
-├─────────────────────────────────────┤
-│         执行引擎 (Executor)          │
-├─────────────────────────────────────┤
-│       SQL解析器 (Parser/Lexer)       │
-├─────────────────────────────────────┤
-│      表管理器 (Table Manager)        │
-├─────────────────────────────────────┤
-│     系统目录 (System Catalog)        │
-├─────────────────────────────────────┤
-│     记录管理器 (Record Manager)       │
-├─────────────────────────────────────┤
-│     缓存管理器 (Buffer Manager)       │
-├─────────────────────────────────────┤
-│      页管理器 (Page Manager)         │
-├─────────────────────────────────────┤
-│          磁盘存储 (Disk)             │
-└─────────────────────────────────────┘
-📁 目录结构
-graphql
-复制
-simple_database/
+```bash
+python main.py demo    # 运行功能演示
+python main.py test    # 运行测试用例
+```
+
+## 系统架构
+
+```
+miniSQL/
 ├── main.py                    # 主程序入口
 ├── requirements.txt           # 依赖列表
 ├── README.md                 # 项目说明
@@ -97,13 +84,13 @@ simple_database/
 │   ├── page_manager.py       # 页面管理
 │   ├── buffer_manager.py     # 缓存管理
 │   ├── record_manager.py     # 记录管理
-│   └── btree.py             # B+树索引实现 (新增)
+│   └── btree.py             # B+树索引实现
 ├── catalog/                  # 系统目录层
 │   ├── __init__.py
-│   ├── data_types.py  # 列定义
-│   ├── schema.py       # 表结构定义
+│   ├── data_types.py         # 列定义
+│   ├── schema.py             # 表结构定义
 │   ├── system_catalog.py     # 系统目录管理
-│   └── index_manager.py      # 索引管理器 (新增)
+│   └── index_manager.py      # 索引管理器
 ├── table/                    # 表管理层
 │   ├── __init__.py
 │   └── table_manager.py     # 表管理器
@@ -112,104 +99,267 @@ simple_database/
 │   ├── lexer.py             # 词法分析
 │   ├── parser.py            # 语法分析
 │   ├── ast_nodes.py         # AST节点定义
-│   └── executor.py          # SQL执行器
+│   ├── executor.py          # SQL执行器
 │   ├── semantic.py          # 语义分析
-│   └──diagnostics.py        # 智能纠错
-    └──transation_state.py   #事务
-└── interface/                # 接口层
-    ├── __init__.py
-    ├── database.py          # 数据库主接口
-    ├── shell.py             # 交互式Shell
-    └── formatter.py         # 结果格式化
-│   ├── web_api.py          # 新增：Flask Web API
-└── db_logging/                  
+│   ├── transaction_state.py # 事务管理
+│   ├── planner.py           # 执行计划生成器
+│   ├── plan_nodes.py        # 执行计划节点
+│   └── execution_engine.py  # 执行引擎
+├── interface/                # 接口层
+│   ├── __init__.py
+│   ├── database.py          # 数据库主接口
+│   ├── shell.py             # 交互式Shell
+│   ├── formatter.py         # 结果格式化
+│   ├── planner_interface.py # 执行计划接口
+│   └── web_api.py           # Flask Web API
+└── db_logging/               # 日志系统
     ├── __init__.py
     ├── logger.py            # 核心日志器
     └── log_manager.py       # 日志管理器
+```
 
-🔧 技术细节
-存储引擎
-页面大小: 4KB固定大小页面
-存储格式: 二进制格式，支持变长记录
-缓存策略: LRU替换算法
-持久化: 所有数据和元数据持久存储到磁盘
+## 支持的SQL语法
 
-SQL引擎
-词法分析: 手工编写的词法分析器
-语法分析: 递归下降解析器
-执行方式: 解释执行，支持条件下推
+### 数据定义语言 (DDL)
 
-数据类型系统
-INTEGER: 32位有符号整数
+```sql
+-- 创建表
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    age INTEGER CHECK(age >= 0),
+    created_at DATETIME DEFAULT NOW()
+);
 
-VARCHAR(n): 变长字符串，UTF-8编码
+-- 创建索引
+CREATE INDEX idx_user_name ON users(name);
+CREATE UNIQUE INDEX idx_user_email ON users(email);
 
-FLOAT: IEEE 754单精度浮点数
+-- 创建视图
+CREATE VIEW active_users AS 
+SELECT * FROM users WHERE age >= 18;
 
-BOOLEAN: 布尔值（0/1）
+-- 删除表/视图/索引
+DROP TABLE users;
+DROP VIEW active_users;
+DROP INDEX idx_user_name;
+```
 
-🎯 使用场景
-这个项目适合以下场景：
+### 数据操纵语言 (DML)
 
-数据库系统学习: 理解数据库内部实现原理
-教学演示: 展示数据库各个组件如何协同工作
-原型开发: 作为简单应用的嵌入式数据库
-技术面试: 展示系统设计和编程能力
+```sql
+-- 插入数据
+INSERT INTO users (name, email, age) 
+VALUES ('张三', 'zhangsan@email.com', 25);
 
-🤝 贡献指南
-欢迎提交 Issue 和 Pull Request！
+-- 查询数据
+SELECT u.name, u.email, COUNT(*) as order_count
+FROM users u 
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE u.age > 20
+GROUP BY u.id, u.name, u.email
+HAVING COUNT(*) > 5
+ORDER BY order_count DESC
+LIMIT 10;
 
-开发环境设置
-bash
-复制
-# 需要Python 3.7+
-python --version  
-## 安装环境依赖
-pip install prompt_toolkit
+-- 更新数据
+UPDATE users SET age = 26 WHERE name = '张三';
 
-## 快速开始
+-- 删除数据
+DELETE FROM users WHERE age < 18;
+TRUNCATE TABLE users;  -- 快速清空表数据
+```
+
+### 数据控制语言 (DCL)
+
+```sql
+-- 用户管理
+CREATE USER 'test_user' IDENTIFIED BY 'password';
+DROP USER 'test_user';
+
+-- 权限管理
+GRANT SELECT, INSERT ON users TO 'test_user';
+REVOKE INSERT ON users FROM 'test_user';
+
+-- 查看权限
+SHOW PRIVILEGES test_user;
+```
+
+### 事务控制
+
+```sql
+-- 事务操作
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;
+
+-- 设置隔离级别和自动提交
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+SET AUTOCOMMIT = 0;
+
+-- 查看事务状态
+SHOW TRANSACTION STATUS;
+SHOW AUTOCOMMIT;
+SHOW ISOLATION LEVEL;
+```
+
+## Shell命令帮助
+
+### 系统命令
+
 ```bash
-python main.py           # 启动交互式 Shell
-python test_btree_standalone   # 运行综合测试脚本
+tables                         # 列出所有表
+describe <table>               # 查看表结构
+show <table>                   # 查看表数据
+indexes [table_name]           # 查看索引信息
+views                          # 列出所有视图
+triggers                       # 列出所有触发器
+stats                          # 显示数据库统计信息
+users                          # 列出所有用户
+whoami                         # 显示当前用户
 ```
 
-## Shell 小贴士（视图相关）
-- 列出视图：`views` 或 `show views`
-- 查看视图定义：`describe view <name>` 或 `show view <name>`
-- 创建视图：`CREATE VIEW v AS <select>`
-- 删除视图：`DROP VIEW v`
-- 支持嵌套视图：在视图上再次创建视图，并可继续使用 WHERE/投影
-- 支持#注释（行内注释），如：
+### 会话管理
+
+```bash
+\session list                  # 列出所有会话
+\session new                   # 新建会话
+\session use <id>              # 切换会话
+\session info                  # 显示当前会话信息
+```
+
+### 演示命令
+
+```bash
+demo views                     # 运行视图演示
+demo constraints               # 运行约束演示
+demo transactions              # 运行事务演示
+```
+
+### 日志命令
+
+```bash
+log level <LEVEL>              # 设置日志级别
+log stats                      # 显示日志统计
+cache stats                    # 显示缓存统计
+```
+
+## 支持的数据类型
+
+| 类型           | 描述    | 示例                      |
+| ------------ | ----- | ----------------------- |
+| INTEGER      | 32位整数 | `123`                   |
+| BIGINT       | 64位整数 | `123456789012345`       |
+| TINYINT      | 8位整数  | `255`                   |
+| FLOAT        | 浮点数   | `3.14159`               |
+| DECIMAL(p,s) | 精确小数  | `DECIMAL(10,2)`         |
+| BOOLEAN      | 布尔值   | `TRUE`, `FALSE`         |
+| CHAR(n)      | 定长字符串 | `CHAR(10)`              |
+| VARCHAR(n)   | 变长字符串 | `VARCHAR(255)`          |
+| TEXT         | 长文本   | 大段文本内容                  |
+| DATE         | 日期    | `'2023-12-25'`          |
+| TIME         | 时间    | `'14:30:00'`            |
+| DATETIME     | 日期时间  | `'2023-12-25 14:30:00'` |
+
+## 智能补全特性
+
+### SQL补全功能
+
+* **关键字补全** - SELECT, INSERT, UPDATE, DELETE等
+* **表名补全** - 自动提示已存在的表名
+* **列名补全** - 基于表结构的列名提示
+* **函数名补全** - COUNT, SUM, AVG等聚合函数
+
+### 使用示例
 
 ```sql
-SELECT * FROM users; # 这是一个注释
-INSERT INTO t VALUES (1, 2); # 插入一行
+-- 输入 "SEL" 后按Tab，自动补全为 "SELECT"
+-- 输入 "FROM us" 后按Tab，自动补全为 "FROM users"
+-- 在WHERE子句中会提示相应表的列名
 ```
 
-## 常见问题（Troubleshooting）
-- 使用视图定义中的字符串字面量（例如 `name = 'Alice'`）时，请确保字面量使用引号。
-- 若创建视图后查询返回空，请检查嵌套视图的 WHERE 条件是否与列名一致，以及字面量是否被正确引号包裹。
-- 仅支持英文分号;分隔SQL，支持多条SQL一次输入，中文分号；不被识别。
-- 示例：
+## 事务管理特性
+
+### 支持的隔离级别
+
+* **READ UNCOMMITTED** - 读未提交（最低隔离级别）
+* **READ COMMITTED** - 读已提交（默认隔离级别）
+* **REPEATABLE READ** - 可重复读（快照隔离）
+* **SERIALIZABLE** - 串行化（最高隔离级别）
+
+### 事务控制命令
 
 ```sql
-CREATE TABLE t1 (id INTEGER); INSERT INTO t1 VALUES (1); SELECT * FROM t1;
+-- 基本事务操作
+BEGIN | START TRANSACTION;
+COMMIT;
+ROLLBACK;
+
+-- 自动提交控制
+SET AUTOCOMMIT = 0|1;
+SHOW AUTOCOMMIT;
+
+-- 隔离级别设置
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+SHOW ISOLATION LEVEL;
+
+-- 事务状态查看
+SHOW TRANSACTION STATUS;
 ```
 
-## 游标功能
+## Web界面特性
 
-支持大结果集分批获取，适合分页/流式处理。
+### 现代化设计
 
-### Shell用法
-```
-\\cursor open SELECT * FROM users;
-\\cursor fetch <id> [n]   # 每次取n行，默认10行
-\\cursor close <id>
-```
+* 响应式布局，适配桌面和移动设备
+* 现代配色方案和字体设计
+* 直观的标签页式管理界面
 
-### Web API
-- `POST /api/cursors/open`  {"sql": "SELECT ..."}  → {"cursor_id": id}
-- `POST /api/cursors/fetch` {"cursor_id": id, "n": 10} → {"rows": [...], "done": bool}
-- `POST /api/cursors/close` {"cursor_id": id}
+### 实时交互
 
-目前仅支持SELECT游标，后续可扩展。
+* SQL编辑器支持语法高亮
+* Ctrl+Enter快速执行SQL
+* 实时显示执行结果和错误信息
+* 事务状态和会话信息实时更新
+
+### 完整功能
+
+* 表数据浏览和编辑
+* 索引和视图管理
+* 用户权限管理
+* 查询历史记录
+* 数据库统计信息
+
+## 性能特性
+
+* **B+树索引** - O(log n)的查询复杂度
+* **LRU缓存** - 智能页面缓存，减少磁盘I/O
+* **查询优化** - 基于成本的执行计划生成
+* **批量操作** - 支持批量插入和更新
+* **分页查询** - 高效的大数据集处理
+
+## 开发与扩展
+
+### 添加新的数据类型
+
+在`catalog/data_types.py`中扩展DataType枚举和相应的验证逻辑。
+
+### 扩展SQL语法
+
+1. 在`sql/lexer.py`中添加新的Token类型
+2. 在`sql/parser.py`中扩展语法规则
+3. 在`sql/executor.py`中实现执行逻辑
+
+### 自定义存储格式
+
+继承`storage/record_manager.py`中的RecordManager类，实现自定义的序列化逻辑。
+
+## 许可证
+
+本项目采用MIT许可证 - 查看LICENSE文件了解详情。
+
+---
+
+**MiniSQL** - 让数据库开发变得简单而强大！

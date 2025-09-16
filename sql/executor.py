@@ -2,7 +2,6 @@
 SQL执行器
 """
 
-from typing import List, Dict, Any, Optional, Union
 import operator
 from storage import Record
 from catalog import DataType, ColumnDefinition, SystemCatalog
@@ -2195,7 +2194,7 @@ class SQLExecutor:
 
     def explain_query(self, ast: Statement, output_format: str = "tree") -> Dict[str, Any]:
         """生成并返回执行计划"""
-        from .planner_interface import PlanGeneratorInterface
+        from interface.planner_interface import PlanGeneratorInterface
 
         planner_interface = PlanGeneratorInterface(self.catalog, self.index_manager)
         return planner_interface.generate_execution_plan(ast, output_format)
@@ -2292,7 +2291,7 @@ class SQLExecutor:
 
     def explain_query(self, ast: Statement, output_format: str = "tree") -> Dict[str, Any]:
         """生成并返回执行计划（不执行）"""
-        from .planner_interface import PlanGeneratorInterface
+        from interface.planner_interface import PlanGeneratorInterface
 
         planner_interface = PlanGeneratorInterface(self.catalog, self.index_manager)
         return planner_interface.generate_execution_plan(ast, output_format)

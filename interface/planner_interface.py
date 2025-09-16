@@ -4,8 +4,8 @@
 """
 
 from typing import Dict, Any, Optional
-from .planner import ExecutionPlanner, PlanFormatter
-from .ast_nodes import Statement
+from sql.planner import ExecutionPlanner, PlanFormatter
+from sql.ast_nodes import Statement
 from catalog import SystemCatalog
 
 
@@ -66,8 +66,8 @@ class PlanGeneratorInterface:
             执行计划结果
         """
         try:
-            from .lexer import SQLLexer
-            from .parser import SQLParser
+            from sql.lexer import SQLLexer
+            from sql.parser import SQLParser
 
             # 词法分析
             lexer = SQLLexer(sql)
