@@ -81,9 +81,11 @@ class LogicalOp(Expression):
 class AggregateFunction(Expression):
     """聚合函数表达式，如COUNT(col), SUM(col)等"""
 
-    def __init__(self, func_name: str, arg: Any):
+    def __init__(self, func_name: str, arg: Any, line: int = None, column: int = None):
         self.func_name = func_name.upper()
         self.arg = arg  # 可以是ColumnRef、'*'等
+        self.line = line
+        self.column = column
 
     def __repr__(self):
         return f"{self.func_name}({self.arg})"
@@ -100,12 +102,16 @@ class CreateTableStatement(Statement):
         table_constraints: List[dict] = None,
         if_exists: bool = False,
         if_not_exists: bool = False,
+        line: int = None,
+        column: int = None
     ):
         self.table_name = table_name
         self.columns = columns
         self.table_constraints = table_constraints or []
         self.if_exists = if_exists
         self.if_not_exists = if_not_exists
+        self.line = line
+        self.column = column
 
     def __repr__(self):
         flag = " IF NOT EXISTS" if self.if_not_exists else (" IF EXISTS" if self.if_exists else "")
@@ -116,11 +122,13 @@ class InsertStatement(Statement):
     """INSERT 语句"""
 
     def __init__(
-        self, table_name: str, columns: List[str], values: List[List[Expression]]
+        self, table_name: str, columns: List[str], values: List[List[Expression]], line: int = None, column: int = None
     ):
         self.table_name = table_name
         self.columns = columns  # 可选列名列表
         self.values = values  # 值列表的列表（支持多行插入）
+        self.line = line
+        self.column = column
 
     def __repr__(self):
         return f"INSERT INTO {self.table_name} ({self.columns}) VALUES {self.values}"
@@ -173,10 +181,14 @@ class UpdateStatement(Statement):
         table_name: str,
         set_clauses: List[Dict[str, Expression]],
         where_clause: Optional[Expression] = None,
+        line: int = None,
+        column: int = None
     ):
         self.table_name = table_name
         self.set_clauses = set_clauses  # [{'column': str, 'value': Expression}]
         self.where_clause = where_clause
+        self.line = line
+        self.column = column
 
     def __repr__(self):
         set_parts = [
@@ -191,9 +203,11 @@ class UpdateStatement(Statement):
 class DeleteStatement(Statement):
     """DELETE 语句"""
 
-    def __init__(self, table_name: str, where_clause: Optional[Expression] = None):
+    def __init__(self, table_name: str, where_clause: Optional[Expression] = None, line: int = None, column: int = None):
         self.table_name = table_name
         self.where_clause = where_clause
+        self.line = line
+        self.column = column
 
     def __repr__(self):
         result = f"DELETE FROM {self.table_name}"
@@ -204,10 +218,12 @@ class DeleteStatement(Statement):
 
 class DropTableStatement(Statement):
     """DROP TABLE 语句"""
-    def __init__(self, table_name: str, if_exists: bool = False, if_not_exists: bool = False):
+    def __init__(self, table_name: str, if_exists: bool = False, if_not_exists: bool = False, line: int = None, column: int = None):
         self.table_name = table_name
         self.if_exists = if_exists
         self.if_not_exists = if_not_exists
+        self.line = line
+        self.column = column
 
     def __repr__(self):
         flag = " IF EXISTS" if self.if_exists else (" IF NOT EXISTS" if self.if_not_exists else "")

@@ -92,6 +92,7 @@ def test_select_valid_columns():
             # 尝试获取行列信息
             line = getattr(e, 'line', '?')
             column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试SELECT有效列", False, f"位置: {line}, {column}，原因: {e}")
     finally:
         tmpfile.close()
@@ -147,6 +148,9 @@ def test_error_select_non_existent_table():
             analyzer.analyze(ast)
             assert_test("测试错误：SELECT不存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试错误：SELECT不存在的表", True)
             assert_test("测试错误：SELECT不存在的表", e.error_list[0] == 'SemanticError' and '表 non_existent_table 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -203,6 +207,9 @@ def test_error_select_non_existent_column():
             analyzer.analyze(ast)
             assert_test("测试错误：SELECT不存在的列", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试错误：SELECT不存在的列", True)
             assert_test("测试错误：SELECT不存在的列", e.error_list[0] == 'SemanticError' and '列 email 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -259,6 +266,9 @@ def test_error_ambiguous_column_in_join():
             analyzer.analyze(ast)
             assert_test("测试错误：JOIN中存在不明确的列", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试错误：JOIN中存在不明确的列", True)
             assert_test("测试错误：JOIN中存在不明确的列", e.error_list[0] == 'SemanticError' and '列 id 不明确' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -315,6 +325,9 @@ def test_insert_column_count_mismatch():
             analyzer.analyze(ast)
             assert_test("测试INSERT列数/值数不匹配", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试INSERT列数/值数不匹配", True)
             assert_test("测试INSERT列数/值数不匹配", e.error_list[0] == 'SemanticError' and '列 non_existent_col 不存在于表 users' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -371,6 +384,9 @@ def test_error_non_agg_in_group_by_select():
             analyzer.analyze(ast)
             assert_test("测试错误：非聚合列未包含在GROUP BY中", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试错误：非聚合列未包含在GROUP BY中", True)
             assert_test("测试错误：非聚合列未包含在GROUP BY中", e.error_list[0] == 'SemanticError' and '非聚合列必须包含在分组键中' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -427,6 +443,9 @@ def test_create_existing_table_error():
             analyzer.analyze(ast)
             assert_test("测试错误：创建已存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试错误：创建已存在的表", True)
             assert_test("测试错误：创建已存在的表", e.error_list[0] == 'SemanticError' and '表 users 已存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -483,6 +502,9 @@ def test_drop_non_existing_table_error():
             analyzer.analyze(ast)
             assert_test("测试错误：删除不存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试错误：删除不存在的表", True)
             assert_test("测试错误：删除不存在的表", e.error_list[0] == 'SemanticError' and '表 non_existent_table 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -512,6 +534,9 @@ def test_semantic_multi_join():
             analyzer.analyze(ast)
             assert_test("测试三表JOIN", True)
         except Exception as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试三表JOIN", False, e)
     finally:
         tmpfile.close()
@@ -539,6 +564,9 @@ def test_semantic_update_type_error():
             analyzer.analyze(ast)
             assert_test("测试UPDATE类型不兼容", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试UPDATE类型不兼容", True)
             assert_test("测试UPDATE类型不兼容", e.error_list[0] == 'SemanticError' and '期望INTEGER类型' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -565,6 +593,9 @@ def test_semantic_delete_nonexistent():
             analyzer.analyze(ast)
             assert_test("测试DELETE不存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             assert_test("测试DELETE不存在的表", True)
             assert_test("测试DELETE不存在的表", e.error_list[0] == 'SemanticError' and '表 notab 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
@@ -593,6 +624,9 @@ def test_semantic_set_invalid_param():
             analyzer.analyze(ast)
             assert_test("测试SET非法参数", False, "预期抛出SyntaxError或SemanticError")
         except (SyntaxError, SemanticError) as e:
+            line = getattr(e, 'line', '?')
+            column = getattr(e, 'column', '?')
+            print([type(e).__name__, f"{line},{column}", str(e)])
             if hasattr(e, 'error_list'):
                 assert_test("测试SET非法参数", e.error_list[0] == 'SemanticError' and '非法参数' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
             else:

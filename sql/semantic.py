@@ -68,7 +68,7 @@ class SemanticAnalyzer:
             return AnalyzedResult(stmt)
 
     # =============== SELECT ===============
-    def _collect_visible_columns(self, from_table: Union[str, JoinClause]) -> Tuple[
+    def _collect_visible_columns(self, from_table: Union[str, JoinClause], stmt: Statement = None) -> Tuple[
         Dict[str, List[Tuple[str, str]]], Dict[str, Dict]]:
         """
         返回:
@@ -115,7 +115,7 @@ class SemanticAnalyzer:
 
             schema = self.catalog.get_table_schema(table_name)
             if not schema:
-                raise SemanticError(f"表 {table_name} 不存在", None, None)
+                raise SemanticError(f"表 {table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
             col_map: Dict[str, Dict] = {}
             for col in schema.columns:
                 col_map[col.name] = {"name": col.name, "type": getattr(col.data_type, "name", str(col.data_type))}
@@ -129,7 +129,7 @@ class SemanticAnalyzer:
                 dfs(node.left)
                 dfs(node.right)
             else:
-                raise SemanticError("未知的from_table类型", None, None)
+                raise SemanticError("未知的from_table类型", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
 
         dfs(from_table)
         return visible, table_schemas
@@ -177,7 +177,7 @@ class SemanticAnalyzer:
 
     def _analyze_select(self, stmt: SelectStatement) -> AnalyzedResult:
         # 收集可见列
-        visible, table_schemas = self._collect_visible_columns(stmt.from_table)
+        visible, table_schemas = self._collect_visible_columns(stmt.from_table, stmt)
 
         # 列消解：展开 *，补齐 ColumnRef.table_name
         resolved_columns: List[Union[ColumnRef, AggregateFunction]] = []
@@ -214,7 +214,7 @@ class SemanticAnalyzer:
             if isinstance(g, ColumnRef):
                 resolved_group_by.append(self._resolve_column(g, visible))
             else:
-                raise SemanticError("GROUP BY 只支持列名", None, None)
+                raise SemanticError("GROUP BY 只支持列名", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
 
         # 聚合与 GROUP BY 规则校验
         has_agg = any(isinstance(c, AggregateFunction) for c in resolved_columns)
@@ -242,7 +242,7 @@ class SemanticAnalyzer:
                     raise SemanticError(f"ORDER BY 列 {key_name} 必须出现在选择列表中", getattr(expr, 'line', None), getattr(expr, 'column', None))
                 resolved_order_by.append(OrderItem(ColumnRef(key_name), item.direction))
             else:
-                raise SemanticError("ORDER BY 只支持列名", None, None)
+                raise SemanticError("ORDER BY 只支持列名", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
 
         # 写回 AST
         stmt.columns = resolved_columns
@@ -261,56 +261,56 @@ class SemanticAnalyzer:
     def _analyze_insert(self, stmt: InsertStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         # 列存在性
         if stmt.columns:
             table_cols = {c.name for c in schema.columns}
             for name in stmt.columns:
                 if name not in table_cols:
-                    raise SemanticError(f"列 {name} 不存在于表 {stmt.table_name}", None, None)
+                    raise SemanticError(f"列 {name} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         # NOT NULL约束检查
         if stmt.columns and hasattr(stmt, 'values') and stmt.values:
             col_defs = [next(c for c in schema.columns if c.name == name) for name in stmt.columns]
             for row in stmt.values:
                 # 列数检查
                 if len(row) != len(col_defs):
-                    raise SemanticError(f"插入的值数({len(row)})与列数({len(col_defs)})不一致", None, None)
+                    raise SemanticError(f"插入的值数({len(row)})与列数({len(col_defs)})不一致", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                 for col_def, value in zip(col_defs, row):
                     # NOT NULL检查（已实现）
                     if not col_def.nullable and value is None:
-                        raise SemanticError(f"列 {col_def.name} 不允许为NULL", None, None)
+                        raise SemanticError(f"列 {col_def.name} 不允许为NULL", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     # 类型一致性检查
                     if value is not None:
                         if hasattr(value, 'value'):
                             value = value.value
                         expected_type = col_def.data_type.name
                         if expected_type == "INTEGER" and not isinstance(value, int):
-                            raise SemanticError(f"列 {col_def.name} 期望INTEGER类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望INTEGER类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "FLOAT" and not (isinstance(value, float) or isinstance(value, int)):
-                            raise SemanticError(f"列 {col_def.name} 期望FLOAT类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望FLOAT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "BOOLEAN" and not isinstance(value, bool):
-                            raise SemanticError(f"列 {col_def.name} 期望BOOLEAN类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望BOOLEAN类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "VARCHAR" and not isinstance(value, str):
-                            raise SemanticError(f"列 {col_def.name} 期望VARCHAR类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望VARCHAR类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "CHAR" and not isinstance(value, str):
-                            raise SemanticError(f"列 {col_def.name} 期望CHAR类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望CHAR类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "BIGINT" and not isinstance(value, int):
-                            raise SemanticError(f"列 {col_def.name} 期望BIGINT类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望BIGINT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "TINYINT" and not isinstance(value, int):
-                            raise SemanticError(f"列 {col_def.name} 期望TINYINT类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望TINYINT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         if expected_type == "TEXT" and not isinstance(value, str):
-                            raise SemanticError(f"列 {col_def.name} 期望TEXT类型，实际为{type(value).__name__}", None, None)
+                            raise SemanticError(f"列 {col_def.name} 期望TEXT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                         # 其它类型可按需扩展
         return AnalyzedResult(stmt)
 
     def _analyze_update(self, stmt: UpdateStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         table_cols = {c.name for c in schema.columns}
         for s in stmt.set_clauses:
             if s["column"] not in table_cols:
-                raise SemanticError(f"列 {s['column']} 不存在于表 {stmt.table_name}", None, None)
+                raise SemanticError(f"列 {s['column']} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         # 类型一致性检查 for UPDATE
         for s in stmt.set_clauses:
             col_def = next((c for c in schema.columns if c.name == s["column"]), None)
@@ -321,34 +321,34 @@ class SemanticAnalyzer:
                 if value is not None:
                     expected_type = col_def.data_type.name
                     if expected_type == "INTEGER" and not isinstance(value, int):
-                        raise SemanticError(f"列 {col_def.name} 期望INTEGER类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望INTEGER类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "FLOAT" and not (isinstance(value, float) or isinstance(value, int)):
-                        raise SemanticError(f"列 {col_def.name} 期望FLOAT类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望FLOAT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "BOOLEAN" and not isinstance(value, bool):
-                        raise SemanticError(f"列 {col_def.name} 期望BOOLEAN类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望BOOLEAN类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "VARCHAR" and not isinstance(value, str):
-                        raise SemanticError(f"列 {col_def.name} 期望VARCHAR类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望VARCHAR类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "CHAR" and not isinstance(value, str):
-                        raise SemanticError(f"列 {col_def.name} 期望CHAR类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望CHAR类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "BIGINT" and not isinstance(value, int):
-                        raise SemanticError(f"列 {col_def.name} 期望BIGINT类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望BIGINT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "TINYINT" and not isinstance(value, int):
-                        raise SemanticError(f"列 {col_def.name} 期望TINYINT类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望TINYINT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     if expected_type == "TEXT" and not isinstance(value, str):
-                        raise SemanticError(f"列 {col_def.name} 期望TEXT类型，实际为{type(value).__name__}", None, None)
+                        raise SemanticError(f"列 {col_def.name} 期望TEXT类型，实际为{type(value).__name__}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
                     # 其它类型可按需扩展
         # WHERE子句列名检查
         def check_where_expr(expr):
             if isinstance(expr, ColumnRef):
                 if expr.column_name not in table_cols:
-                    raise SemanticError(f"WHERE子句列 {expr.column_name} 不存在于表 {stmt.table_name}", None, None)
+                    raise SemanticError(f"WHERE子句列 {expr.column_name} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
             elif hasattr(expr, 'left') and hasattr(expr, 'right'):
                 check_where_expr(expr.left)
                 check_where_expr(expr.right)
             elif hasattr(expr, 'arg'):
                 if isinstance(expr.arg, ColumnRef):
                     if expr.arg.column_name not in table_cols:
-                        raise SemanticError(f"WHERE子句列 {expr.arg.column_name} 不存在于表 {stmt.table_name}", None, None)
+                        raise SemanticError(f"WHERE子句列 {expr.arg.column_name} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
             # 其它类型略
         if getattr(stmt, 'where_clause', None):
             check_where_expr(stmt.where_clause)
@@ -357,20 +357,20 @@ class SemanticAnalyzer:
     def _analyze_delete(self, stmt: DeleteStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         table_cols = {c.name for c in schema.columns}
         # WHERE子句列名检查
         def check_where_expr(expr):
             if isinstance(expr, ColumnRef):
                 if expr.column_name not in table_cols:
-                    raise SemanticError(f"WHERE子句列 {expr.column_name} 不存在于表 {stmt.table_name}", None, None)
+                    raise SemanticError(f"WHERE子句列 {expr.column_name} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
             elif hasattr(expr, 'left') and hasattr(expr, 'right'):
                 check_where_expr(expr.left)
                 check_where_expr(expr.right)
             elif hasattr(expr, 'arg'):
                 if isinstance(expr.arg, ColumnRef):
                     if expr.arg.column_name not in table_cols:
-                        raise SemanticError(f"WHERE子句列 {expr.arg.column_name} 不存在于表 {stmt.table_name}", None, None)
+                        raise SemanticError(f"WHERE子句列 {expr.arg.column_name} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
             # 其它类型略
         if getattr(stmt, 'where_clause', None):
             check_where_expr(stmt.where_clause)
@@ -383,11 +383,11 @@ class SemanticAnalyzer:
             # 已存在且 IF NOT EXISTS，直接通过
             return AnalyzedResult(stmt)
         if schema:
-            raise SemanticError(f"表 {stmt.table_name} 已存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 已存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         # 重复列名检查
         col_names = [col['name'] if isinstance(col, dict) else getattr(col, 'name', None) for col in stmt.columns]
         if len(col_names) != len(set(col_names)):
-            raise SemanticError(f"表 {stmt.table_name} 存在重复列名", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 存在重复列名", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         # 多主键检查
         pk_count = 0
         for col in stmt.columns:
@@ -398,7 +398,7 @@ class SemanticAnalyzer:
             if 'PRIMARY KEY' in constraints:
                 pk_count += 1
         if pk_count > 1:
-            raise SemanticError(f"表 {stmt.table_name} 存在多个主键", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 存在多个主键", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         return AnalyzedResult(stmt)
 
     def _analyze_drop_table(self, stmt: DropTableStatement) -> AnalyzedResult:
@@ -407,7 +407,7 @@ class SemanticAnalyzer:
             # 不存在且 IF EXISTS，直接通过
             return AnalyzedResult(stmt)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         return AnalyzedResult(stmt)
 
     # 你可以按需为索引、视图、用户等类似扩展 
@@ -417,15 +417,15 @@ class SemanticAnalyzer:
         # 检查表是否存在
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         
         # 检查事件是否合法
         if stmt.event not in ('INSERT', 'UPDATE', 'DELETE'):
-            raise SemanticError(f"不支持的事件类型: {stmt.event}", None, None)
+            raise SemanticError(f"不支持的事件类型: {stmt.event}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
             
         # 检查时机是否合法
         if stmt.timing not in ('BEFORE', 'AFTER'):
-            raise SemanticError(f"不支持的触发时机: {stmt.timing}", None, None)
+            raise SemanticError(f"不支持的触发时机: {stmt.timing}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         
         # 触发器体的语义分析在执行阶段进行（因为可能引用当前表）
         return AnalyzedResult(stmt)
@@ -438,15 +438,15 @@ class SemanticAnalyzer:
     def _analyze_alter_table(self, stmt: 'AlterTableStatement') -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+            raise SemanticError(f"表 {stmt.table_name} 不存在", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         if stmt.action == 'ADD':
             col_name = stmt.column_def['name']
             if any(c.name == col_name for c in schema.columns):
-                raise SemanticError(f"列 {col_name} 已存在于表 {stmt.table_name}", None, None)
+                raise SemanticError(f"列 {col_name} 已存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         elif stmt.action == 'DROP':
             col_name = stmt.column_name
             if not any(c.name == col_name for c in schema.columns):
-                raise SemanticError(f"列 {col_name} 不存在于表 {stmt.table_name}", None, None)
+                raise SemanticError(f"列 {col_name} 不存在于表 {stmt.table_name}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         else:
-            raise SemanticError(f"ALTER TABLE 不支持的操作: {stmt.action}", None, None)
+            raise SemanticError(f"ALTER TABLE 不支持的操作: {stmt.action}", getattr(stmt, 'line', None), getattr(stmt, 'column', None))
         return AnalyzedResult(stmt)

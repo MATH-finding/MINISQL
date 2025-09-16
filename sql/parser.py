@@ -262,6 +262,7 @@ class SQLParser:
         """解析 INSERT 语句
         支持多行插入、可选列名。
         """
+        start_line, start_column = self.current_token.line, self.current_token.column
         self._expect(TokenType.INSERT)
         self._expect(TokenType.INTO)
 
@@ -305,7 +306,7 @@ class SQLParser:
             else:
                 break
 
-        return InsertStatement(table_name, columns, values)
+        return InsertStatement(table_name, columns, values, start_line, start_column)
 
     def _parse_truncate(self) -> TruncateTableStatement:
         """解析TRUNCATE TABLE语句"""
@@ -336,6 +337,8 @@ class SQLParser:
                 TokenType.MAX,
             ):
                 func_type = self.current_token.type
+                line = self.current_token.line
+                column = self.current_token.column
                 self._advance()
                 self._expect(TokenType.LEFT_PAREN)
                 # 支持COUNT(*)
@@ -347,18 +350,20 @@ class SQLParser:
                     arg = self._parse_expression()
                 self._expect(TokenType.RIGHT_PAREN)
                 # 构造聚合函数AST节点
-                columns.append(AggregateFunction(func_type.name, arg))
+                columns.append(AggregateFunction(func_type.name, arg, line, column))
             else:
                 # 普通列名或带表前缀的列
                 column_name = self._expect(TokenType.IDENTIFIER).value
-                # 检查是否有表前缀（如table.col）
+                # 记录当前token的位置信息
+                line = self.tokens[self.position - 1].line if self.position > 0 else None
+                column = self.tokens[self.position - 1].column if self.position > 0 else None
                 if self.current_token and self.current_token.type == TokenType.DOT:
                     self._advance()
                     table_name = column_name
                     column_name = self._expect(TokenType.IDENTIFIER).value
-                    columns.append(ColumnRef(column_name, table_name))
+                    columns.append(ColumnRef(column_name, table_name, line, column))
                 else:
-                    columns.append(ColumnRef(column_name))
+                    columns.append(ColumnRef(column_name, None, line, column))
 
             # 逗号分隔多个字段，遇到逗号则继续循环，否则跳出
             if self.current_token.type == TokenType.COMMA:
@@ -533,14 +538,16 @@ class SQLParser:
     def _parse_primary(self) -> Expression:
         if self.current_token.type == TokenType.IDENTIFIER:
             column_name = self.current_token.value
+            line = self.current_token.line
+            column = self.current_token.column
             self._advance()
             if self.current_token and self.current_token.type == TokenType.DOT:
                 self._advance()
                 table_name = column_name
                 column_name = self._expect(TokenType.IDENTIFIER).value
-                return ColumnRef(column_name, table_name)
+                return ColumnRef(column_name, table_name, line, column)
             else:
-                return ColumnRef(column_name)
+                return ColumnRef(column_name, None, line, column)
         elif self.current_token.type == TokenType.NUMBER:
             value = self.current_token.value
             self._advance()
@@ -590,7 +597,7 @@ class SQLParser:
     #         return wrapper
     #     return decorator
 
-    def _parse_create_table(self):
+    def _parse_create_table(self, start_line, start_column):
         # 解析 CREATE TABLE 语句，支持 IF NOT EXISTS
         self._expect(TokenType.TABLE)
         # 在 CREATE TABLE 之后，在表名之前，解析 IF NOT EXISTS
@@ -606,20 +613,21 @@ class SQLParser:
             elif self.current_token.type != TokenType.RIGHT_PAREN:
                 raise SyntaxError(str([self.current_token.line, self.current_token.column, "列定义之间需要逗号分隔"]))
         self._expect(TokenType.RIGHT_PAREN)
-        return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists)
+        return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists, line=start_line, column=start_column)
 
-    def _parse_drop_table(self):
+    def _parse_drop_table(self, start_line, start_column):
         # 解析 DROP TABLE 语句，支持 IF EXISTS
         self._expect(TokenType.TABLE)
         # 在 DROP TABLE 之后，在表名之前，解析 IF EXISTS
         if_exists, _ = self._parse_if_exists_flags(support_not=False)
         table_name = self._expect(TokenType.IDENTIFIER).value
-        return DropTableStatement(table_name, if_exists=if_exists)
+        return DropTableStatement(table_name, if_exists=if_exists, line=start_line, column=start_column)
 
     def _parse_update(self) -> UpdateStatement:
         """解析UPDATE语句: UPDATE table SET col1=val1, col2=val2 WHERE condition
         支持多列赋值和可选WHERE。
         """
+        start_line, start_column = self.current_token.line, self.current_token.column
         self._expect(TokenType.UPDATE)
 
         # 获取表名
@@ -649,12 +657,13 @@ class SQLParser:
             self._expect(TokenType.WHERE)
             where_clause = self._parse_where_expression()  # 使用现有的WHERE解析方法
 
-        return UpdateStatement(table_name, set_clauses, where_clause)
+        return UpdateStatement(table_name, set_clauses, where_clause, start_line, start_column)
 
     def _parse_delete(self) -> DeleteStatement:
         """解析DELETE语句: DELETE FROM table WHERE condition
         支持可选WHERE。
         """
+        start_line, start_column = self.current_token.line, self.current_token.column
         self._expect(TokenType.DELETE)
         self._expect(TokenType.FROM)
 
@@ -667,7 +676,7 @@ class SQLParser:
             self._expect(TokenType.WHERE)
             where_clause = self._parse_where_expression()  # 使用现有的WHERE解析方法
 
-        return DeleteStatement(table_name, where_clause)
+        return DeleteStatement(table_name, where_clause, start_line, start_column)
 
 
     def _parse_create_index(self, is_unique: bool = False):
@@ -757,6 +766,7 @@ class SQLParser:
     # 在 _parse_create_statement/_parse_drop_statement 里分发到上述方法
     def _parse_create_statement(self):
         # CREATE分发：TABLE/INDEX
+        start_line, start_column = self.current_token.line, self.current_token.column
         self._expect(TokenType.CREATE)
         if self.current_token.type == TokenType.UNIQUE:
             self._advance()
@@ -764,17 +774,18 @@ class SQLParser:
         elif self.current_token.type == TokenType.INDEX:
             return self._parse_create_index(is_unique=False)
         elif self.current_token.type == TokenType.TABLE:
-            return self._parse_create_table()
+            return self._parse_create_table(start_line, start_column)
         else:
             raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
 
     def _parse_drop_statement(self):
         # DROP分发：TABLE/INDEX
+        start_line, start_column = self.current_token.line, self.current_token.column
         self._expect(TokenType.DROP)
         if self.current_token.type == TokenType.INDEX:
             return self._parse_drop_index()
         elif self.current_token.type == TokenType.TABLE:
-            return self._parse_drop_table()
+            return self._parse_drop_table(start_line, start_column)
         else:
             raise SyntaxError(f"DROP语句支持INDEX或TABLE，但得到 {self.current_token.value}")
 
