@@ -563,3 +563,34 @@ class SimpleDatabase:
             }
         except Exception as e:
             return {"success": False, "message": f"执行视图查询失败: {str(e)}"}
+
+    # 在你的主接口中添加选择执行方式的方法
+    def execute_sql_with_options(self, sql: str, use_execution_plan: bool = False, explain_only: bool = False) -> Dict[
+        str, Any]:
+        """执行SQL的增强版本"""
+        try:
+            from sql.lexer import SQLLexer
+            from sql.parser import SQLParser
+
+            # 解析SQL
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+
+            if explain_only:
+                # 只生成执行计划，不执行
+                return self.executor.explain_query(ast)
+            elif use_execution_plan:
+                # 使用执行计划执行
+                return self.executor.execute_with_execution_plan(ast, use_plan=True)
+            else:
+                # 使用原有执行器
+                return self.executor.execute(ast)
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"SQL执行失败: {str(e)}"
+            }

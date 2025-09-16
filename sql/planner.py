@@ -1,0 +1,412 @@
+# sql/planner.py
+"""
+执行计划生成器 - 将AST转换为逻辑执行计划
+"""
+
+import json
+from typing import Dict, Any, Optional, List, Union
+from .ast_nodes import *
+from .plan_nodes import *
+from catalog import SystemCatalog
+from catalog.index_manager import IndexManager
+
+
+class ExecutionPlanner:
+    """执行计划生成器"""
+
+    def __init__(self, catalog: SystemCatalog, index_manager: Optional[IndexManager] = None):
+        self.catalog = catalog
+        self.index_manager = index_manager
+        self.table_stats = {}  # 表统计信息缓存
+        self.cost_model = CostModel()
+
+    def generate_plan(self, ast: Statement) -> PlanNode:
+        """根据AST生成执行计划"""
+        if isinstance(ast, SelectStatement):
+            return self._plan_select(ast)
+        elif isinstance(ast, InsertStatement):
+            return self._plan_insert(ast)
+        elif isinstance(ast, UpdateStatement):
+            return self._plan_update(ast)
+        elif isinstance(ast, DeleteStatement):
+            return self._plan_delete(ast)
+        elif isinstance(ast, CreateTableStatement):
+            return self._plan_create_table(ast)
+        else:
+            raise ValueError(f"不支持的语句类型: {type(ast).__name__}")
+
+    def _plan_select(self, stmt: SelectStatement) -> PlanNode:
+        """规划SELECT语句"""
+        # 1. 处理FROM子句
+        scan_plan = self._plan_from_clause(stmt.from_table)
+
+        # 2. 处理WHERE子句
+        if stmt.where_clause:
+            scan_plan = self._plan_where_clause(scan_plan, stmt.where_clause)
+
+        # 3. 处理GROUP BY和聚合函数
+        if hasattr(stmt, 'group_by') and stmt.group_by:
+            agg_functions = []
+            for col in stmt.columns:
+                if isinstance(col, AggregateFunction):
+                    agg_functions.append({
+                        "function": col.func_name,
+                        "column": str(col.arg),
+                        "alias": col.func_name
+                    })
+
+            group_by_cols = [str(g) for g in stmt.group_by]
+            scan_plan = AggregateNode(scan_plan, group_by_cols, agg_functions)
+            self.cost_model.estimate_aggregate_cost(scan_plan)
+
+        # 4. 处理投影
+        if stmt.columns != ["*"]:
+            scan_plan = ProjectNode(scan_plan, stmt.columns)
+            self.cost_model.estimate_project_cost(scan_plan)
+
+        # 5. 处理ORDER BY
+        if hasattr(stmt, 'order_by') and stmt.order_by:
+            order_spec = []
+            for item in stmt.order_by:
+                order_spec.append({
+                    "column": str(item.expr),
+                    "direction": item.direction
+                })
+            scan_plan = SortNode(scan_plan, order_spec)
+            self.cost_model.estimate_sort_cost(scan_plan)
+
+        return scan_plan
+
+    def _plan_from_clause(self, from_table) -> PlanNode:
+        """规划FROM子句"""
+        if isinstance(from_table, str):
+            # 单表扫描
+            return self._create_table_scan_plan(from_table)
+        elif isinstance(from_table, JoinClause):
+            # 连接
+            left_plan = self._plan_from_clause(from_table.left)
+            right_plan = self._plan_from_clause(from_table.right)
+
+            join_plan = JoinNode(left_plan, right_plan,
+                                 from_table.join_type, from_table.on)
+            self.cost_model.estimate_join_cost(join_plan)
+            return join_plan
+        else:
+            raise ValueError(f"不支持的FROM子句类型: {type(from_table)}")
+
+    def _create_table_scan_plan(self, table_name: str) -> PlanNode:
+        """创建表扫描计划"""
+        schema = self.catalog.get_table_schema(table_name)
+        if not schema:
+            raise ValueError(f"表 {table_name} 不存在")
+
+        # 构建输出模式
+        output_schema = [col.name for col in schema.columns]
+
+        # 默认使用顺序扫描
+        scan_plan = SeqScanNode(table_name)
+        scan_plan.output_schema = output_schema
+
+        # 估算成本
+        self.cost_model.estimate_seqscan_cost(scan_plan, self._get_table_rows(table_name))
+
+        return scan_plan
+
+    def _plan_where_clause(self, child_plan: PlanNode, where_clause: Expression) -> PlanNode:
+        """规划WHERE子句"""
+        # 尝试使用索引扫描优化
+        if isinstance(child_plan, SeqScanNode):
+            index_plan = self._try_index_scan(child_plan.table_name, where_clause)
+            if index_plan:
+                return index_plan
+
+        # 使用过滤节点
+        filter_plan = FilterNode(child_plan, where_clause)
+        self.cost_model.estimate_filter_cost(filter_plan, self._estimate_selectivity(where_clause))
+        return filter_plan
+
+    def _try_index_scan(self, table_name: str, condition: Expression) -> Optional[IndexScanNode]:
+        """尝试使用索引扫描"""
+        if not self.index_manager:
+            return None
+
+        # 分析条件是否可以使用索引
+        index_info = self._analyze_index_condition(table_name, condition)
+        if not index_info:
+            return None
+
+        index_name, scan_condition = index_info
+        index_plan = IndexScanNode(table_name, index_name, scan_condition)
+
+        # 设置输出模式
+        schema = self.catalog.get_table_schema(table_name)
+        index_plan.output_schema = [col.name for col in schema.columns]
+
+        # 估算成本
+        self.cost_model.estimate_index_scan_cost(index_plan, self._get_table_rows(table_name))
+
+        return index_plan
+
+    def _analyze_index_condition(self, table_name: str, condition: Expression) -> Optional[tuple]:
+        """分析条件是否可以使用索引"""
+        if not isinstance(condition, BinaryOp):
+            return None
+
+        if not isinstance(condition.left, ColumnRef) or not isinstance(condition.right, Literal):
+            return None
+
+        column_name = condition.left.column_name
+
+        # 查找可用索引
+        if hasattr(self.index_manager, 'get_table_indexes'):
+            available_indexes = self.index_manager.get_table_indexes(table_name)
+            for index_name in available_indexes:
+                index_info = self.index_manager.indexes.get(index_name)
+                if index_info and index_info.column_name == column_name:
+                    if condition.operator in ["=", "<", "<=", ">", ">="]:
+                        return (index_name, condition)
+
+        return None
+
+    def _plan_insert(self, stmt: InsertStatement) -> InsertNode:
+        """规划INSERT语句"""
+        # 提取值
+        values = []
+        for value_row in stmt.values:
+            row_values = []
+            for expr in value_row:
+                if isinstance(expr, Literal):
+                    row_values.append(expr.value)
+                else:
+                    row_values.append(str(expr))
+            values.append(row_values)
+
+        insert_plan = InsertNode(stmt.table_name, stmt.columns, values)
+        self.cost_model.estimate_insert_cost(insert_plan)
+        return insert_plan
+
+    def _plan_update(self, stmt: UpdateStatement) -> UpdateNode:
+        """规划UPDATE语句"""
+        child_plan = None
+
+        # 如果有WHERE条件，创建扫描+过滤计划
+        if stmt.where_clause:
+            scan_plan = self._create_table_scan_plan(stmt.table_name)
+            child_plan = self._plan_where_clause(scan_plan, stmt.where_clause)
+
+        update_plan = UpdateNode(stmt.table_name, stmt.set_clauses, child_plan)
+        self.cost_model.estimate_update_cost(update_plan)
+        return update_plan
+
+    def _plan_delete(self, stmt: DeleteStatement) -> DeleteNode:
+        """规划DELETE语句"""
+        child_plan = None
+
+        # 如果有WHERE条件，创建扫描+过滤计划
+        if stmt.where_clause:
+            scan_plan = self._create_table_scan_plan(stmt.table_name)
+            child_plan = self._plan_where_clause(scan_plan, stmt.where_clause)
+
+        delete_plan = DeleteNode(stmt.table_name, child_plan)
+        self.cost_model.estimate_delete_cost(delete_plan)
+        return delete_plan
+
+    def _plan_create_table(self, stmt: CreateTableStatement) -> CreateTableNode:
+        """规划CREATE TABLE语句"""
+        create_plan = CreateTableNode(stmt.table_name, stmt.columns)
+        self.cost_model.estimate_create_table_cost(create_plan)
+        return create_plan
+
+    def _get_table_rows(self, table_name: str) -> int:
+        """获取表的行数估计"""
+        if table_name in self.table_stats:
+            return self.table_stats[table_name]["rows"]
+
+        # 简单估计：假设每个页面平均100行
+        pages = len(self.catalog.get_table_pages(table_name))
+        estimated_rows = max(pages * 100, 1000)  # 至少估计1000行
+
+        self.table_stats[table_name] = {"rows": estimated_rows}
+        return estimated_rows
+
+    def _estimate_selectivity(self, condition: Expression) -> float:
+        """估计选择性"""
+        if isinstance(condition, BinaryOp):
+            if condition.operator == "=":
+                return 0.1  # 等值条件选择性10%
+            elif condition.operator in ["<", "<=", ">", ">="]:
+                return 0.3  # 范围条件选择性30%
+            else:
+                return 0.5  # 其他条件选择性50%
+        elif isinstance(condition, LogicalOp):
+            if condition.operator == "AND":
+                return 0.1  # AND条件选择性更低
+            else:  # OR
+                return 0.7  # OR条件选择性更高
+        else:
+            return 0.5  # 默认选择性50%
+
+
+class CostModel:
+    """成本模型"""
+
+    def __init__(self):
+        # 成本参数
+        self.seq_scan_cost_per_page = 1.0
+        self.index_scan_cost_per_page = 0.3
+        self.cpu_cost_per_tuple = 0.01
+        self.join_cost_factor = 2.0
+
+    def estimate_seqscan_cost(self, node: SeqScanNode, table_rows: int):
+        """估算顺序扫描成本"""
+        pages = max(table_rows // 100, 1)  # 假设每页100行
+        node.estimated_rows = table_rows
+        node.estimated_cost = pages * self.seq_scan_cost_per_page
+
+    def estimate_index_scan_cost(self, node: IndexScanNode, table_rows: int):
+        """估算索引扫描成本"""
+        # 假设索引扫描只返回10%的数据
+        node.estimated_rows = int(table_rows * 0.1)
+        pages = max(node.estimated_rows // 100, 1)
+        node.estimated_cost = pages * self.index_scan_cost_per_page
+
+    def estimate_filter_cost(self, node: FilterNode, selectivity: float):
+        """估算过滤成本"""
+        child = node.children[0]
+        node.estimated_rows = int(child.estimated_rows * selectivity)
+        node.estimated_cost = child.estimated_cost + child.estimated_rows * self.cpu_cost_per_tuple
+
+    def estimate_project_cost(self, node: ProjectNode):
+        """估算投影成本"""
+        child = node.children[0]
+        node.estimated_rows = child.estimated_rows
+        node.estimated_cost = child.estimated_cost + child.estimated_rows * self.cpu_cost_per_tuple
+
+    def estimate_join_cost(self, node: JoinNode):
+        """估算连接成本"""
+        left_child, right_child = node.children
+        node.estimated_rows = left_child.estimated_rows * right_child.estimated_rows // 10
+        node.estimated_cost = (left_child.estimated_cost + right_child.estimated_cost +
+                               left_child.estimated_rows * right_child.estimated_rows *
+                               self.cpu_cost_per_tuple * self.join_cost_factor)
+
+    def estimate_sort_cost(self, node: SortNode):
+        """估算排序成本"""
+        child = node.children[0]
+        node.estimated_rows = child.estimated_rows
+        # 排序成本 = O(N log N)
+        import math
+        sort_cost = child.estimated_rows * math.log2(max(child.estimated_rows, 1)) * self.cpu_cost_per_tuple
+        node.estimated_cost = child.estimated_cost + sort_cost
+
+    def estimate_aggregate_cost(self, node: AggregateNode):
+        """估算聚合成本"""
+        child = node.children[0]
+        if node.group_by:
+            # 有分组：估计分组数
+            node.estimated_rows = max(child.estimated_rows // 10, 1)
+        else:
+            # 无分组：返回1行
+            node.estimated_rows = 1
+        node.estimated_cost = child.estimated_cost + child.estimated_rows * self.cpu_cost_per_tuple
+
+    def estimate_insert_cost(self, node: InsertNode):
+        """估算插入成本"""
+        node.estimated_cost = len(node.values) * self.cpu_cost_per_tuple * 2  # 插入成本较高
+
+    def estimate_update_cost(self, node: UpdateNode):
+        """估算更新成本"""
+        if node.children:
+            child = node.children[0]
+            node.estimated_rows = child.estimated_rows
+            node.estimated_cost = child.estimated_cost + child.estimated_rows * self.cpu_cost_per_tuple * 3
+        else:
+            node.estimated_rows = 1000  # 默认估计
+            node.estimated_cost = node.estimated_rows * self.cpu_cost_per_tuple * 3
+
+    def estimate_delete_cost(self, node: DeleteNode):
+        """估算删除成本"""
+        if node.children:
+            child = node.children[0]
+            node.estimated_rows = child.estimated_rows
+            node.estimated_cost = child.estimated_cost + child.estimated_rows * self.cpu_cost_per_tuple * 2
+        else:
+            node.estimated_rows = 1000  # 默认估计
+            node.estimated_cost = node.estimated_rows * self.cpu_cost_per_tuple * 2
+
+    def estimate_create_table_cost(self, node: CreateTableNode):
+        """估算建表成本"""
+        node.estimated_cost = len(node.columns) * 0.1  # 建表成本较低
+
+
+class PlanFormatter:
+    """执行计划格式化器"""
+
+    @staticmethod
+    def format_as_tree(plan: PlanNode) -> str:
+        """格式化为树形字符串"""
+        return plan.to_tree_string()
+
+    @staticmethod
+    def format_as_json(plan: PlanNode, indent: int = 2) -> str:
+        """格式化为JSON字符串"""
+        return json.dumps(plan.to_dict(), indent=indent, ensure_ascii=False)
+
+    @staticmethod
+    def format_as_sexp(plan: PlanNode) -> str:
+        """格式化为S表达式"""
+        return PlanFormatter._node_to_sexp(plan)
+
+    @staticmethod
+    def _node_to_sexp(node: PlanNode) -> str:
+        """将节点转换为S表达式"""
+        if isinstance(node, SeqScanNode):
+            filter_part = f" :filter {node.filter_condition}" if node.filter_condition else ""
+            return f"(seqscan :table {node.table_name}{filter_part} :cost {node.estimated_cost:.2f})"
+
+        elif isinstance(node, IndexScanNode):
+            return f"(indexscan :table {node.table_name} :index {node.index_name} :condition {node.scan_condition} :cost {node.estimated_cost:.2f})"
+
+        elif isinstance(node, FilterNode):
+            child_sexp = PlanFormatter._node_to_sexp(node.children[0])
+            return f"(filter :condition {node.condition} :cost {node.estimated_cost:.2f} {child_sexp})"
+
+        elif isinstance(node, ProjectNode):
+            child_sexp = PlanFormatter._node_to_sexp(node.children[0])
+            return f"(project :select {node.select_list} :cost {node.estimated_cost:.2f} {child_sexp})"
+
+        elif isinstance(node, JoinNode):
+            left_sexp = PlanFormatter._node_to_sexp(node.children[0])
+            right_sexp = PlanFormatter._node_to_sexp(node.children[1])
+            return f"(join :type {node.join_type} :condition {node.join_condition} :cost {node.estimated_cost:.2f} {left_sexp} {right_sexp})"
+
+        elif isinstance(node, SortNode):
+            child_sexp = PlanFormatter._node_to_sexp(node.children[0])
+            return f"(sort :order {node.order_by} :cost {node.estimated_cost:.2f} {child_sexp})"
+
+        elif isinstance(node, AggregateNode):
+            child_sexp = PlanFormatter._node_to_sexp(node.children[0])
+            return f"(aggregate :group {node.group_by} :funcs {node.aggregate_functions} :cost {node.estimated_cost:.2f} {child_sexp})"
+
+        elif isinstance(node, InsertNode):
+            return f"(insert :table {node.table_name} :columns {node.columns} :rows {len(node.values)} :cost {node.estimated_cost:.2f})"
+
+        elif isinstance(node, UpdateNode):
+            if node.children:
+                child_sexp = PlanFormatter._node_to_sexp(node.children[0])
+                return f"(update :table {node.table_name} :set {node.set_clauses} :cost {node.estimated_cost:.2f} {child_sexp})"
+            else:
+                return f"(update :table {node.table_name} :set {node.set_clauses} :cost {node.estimated_cost:.2f})"
+
+        elif isinstance(node, DeleteNode):
+            if node.children:
+                child_sexp = PlanFormatter._node_to_sexp(node.children[0])
+                return f"(delete :table {node.table_name} :cost {node.estimated_cost:.2f} {child_sexp})"
+            else:
+                return f"(delete :table {node.table_name} :cost {node.estimated_cost:.2f})"
+
+        elif isinstance(node, CreateTableNode):
+            return f"(create-table :table {node.table_name} :columns {len(node.columns)} :cost {node.estimated_cost:.2f})"
+
+        else:
+            return f"(unknown-node :type {type(node).__name__})"

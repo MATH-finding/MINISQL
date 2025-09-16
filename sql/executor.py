@@ -2192,3 +2192,107 @@ class SQLExecutor:
             del SQLExecutor._cursors[cursor_id]
             return True
         return False
+
+    def explain_query(self, ast: Statement, output_format: str = "tree") -> Dict[str, Any]:
+        """生成并返回执行计划"""
+        from .planner_interface import PlanGeneratorInterface
+
+        planner_interface = PlanGeneratorInterface(self.catalog, self.index_manager)
+        return planner_interface.generate_execution_plan(ast, output_format)
+
+
+    def execute_explain(self, sql: str, output_format: str = "tree") -> Dict[str, Any]:
+        """执行EXPLAIN语句"""
+        try:
+            from .lexer import SQLLexer
+            from .parser import SQLParser
+
+            # 解析SQL
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+
+            # 生成执行计划
+            result = self.explain_query(ast, output_format)
+
+            if result["success"]:
+                return {
+                    "type": "EXPLAIN",
+                    "success": True,
+                    "data": result["plan"],
+                    "format": output_format,
+                    "estimated_cost": result.get("estimated_cost", 0),
+                    "estimated_rows": result.get("estimated_rows", 0),
+                    "message": result["message"]
+                }
+            else:
+                return {
+                    "type": "EXPLAIN",
+                    "success": False,
+                    "error": result["error"],
+                    "message": result["message"]
+                }
+
+        except Exception as e:
+            return {
+                "type": "EXPLAIN",
+                "success": False,
+                "error": str(e),
+                "message": f"EXPLAIN执行失败: {str(e)}"
+            }
+
+
+    # 在SQLExecutor类中添加这些方法
+
+    def execute_with_execution_plan(self, ast: Statement, use_plan: bool = True) -> Dict[str, Any]:
+        """使用执行计划执行SQL（可选）"""
+        if not use_plan:
+            return self.execute(ast)
+
+        # 只对SELECT语句使用执行计划
+        if isinstance(ast, SelectStatement):
+            try:
+                return self._execute_select_with_plan(ast)
+            except Exception as e:
+                print(f"[EXECUTOR] 执行计划执行失败，回退到直接执行: {e}")
+                return self._execute_select(ast)
+        else:
+            # 其他语句继续使用原有执行器
+            return self.execute(ast)
+
+
+    def _execute_select_with_plan(self, stmt: SelectStatement) -> Dict[str, Any]:
+        """使用执行计划执行SELECT语句"""
+        from .planner import ExecutionPlanner
+        from .execution_engine import ExecutionEngine
+
+        # 生成执行计划
+        planner = ExecutionPlanner(self.catalog, self.index_manager)
+        plan = planner.generate_plan(stmt)
+
+        print(f"[EXECUTOR] 生成的执行计划:")
+        print(plan.to_tree_string())
+
+        # 创建执行引擎
+        engine = ExecutionEngine(self.table_manager, self.catalog, self.index_manager)
+
+        # 执行计划
+        result = engine.execute_plan(plan)
+
+        # 添加执行计划信息到结果
+        result["execution_plan"] = {
+            "plan_tree": plan.to_tree_string(),
+            "estimated_cost": plan.estimated_cost,
+            "estimated_rows": plan.estimated_rows
+        }
+
+        return result
+
+
+    def explain_query(self, ast: Statement, output_format: str = "tree") -> Dict[str, Any]:
+        """生成并返回执行计划（不执行）"""
+        from .planner_interface import PlanGeneratorInterface
+
+        planner_interface = PlanGeneratorInterface(self.catalog, self.index_manager)
+        return planner_interface.generate_execution_plan(ast, output_format)
