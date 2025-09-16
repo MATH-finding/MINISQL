@@ -48,14 +48,14 @@ class DatabaseWebAPI:
             # 为每个Web会话创建独立的数据库会话
             if not hasattr(self, '_web_sessions'):
                 self._web_sessions = {}
-            
+
             if not hasattr(self, '_user_selected_sessions'):
                 self._user_selected_sessions = {}
-            
+
             if session_id not in self._web_sessions:
                 # 创建新的数据库会话
                 self._web_sessions[session_id] = self.db.new_session()
-            
+
             # 检查用户是否通过 \session use 选择了特定会话
             if session_id in self._user_selected_sessions:
                 # 使用用户选择的会话 - 确保真正切换
@@ -67,7 +67,7 @@ class DatabaseWebAPI:
             else:
                 # 使用默认的Web会话
                 self.db.use_session(self._web_sessions[session_id])
-        
+
         return self.db
 
     def _require_auth(self):
@@ -915,7 +915,7 @@ class DatabaseWebAPI:
                                     <span id="current-user-txn">-</span>
                                 </div>
                             </div>
-                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">刷新状态</button>
+                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">手动刷新</button>
                         </div>
 
                         <!-- 事务控制 -->
@@ -1018,13 +1018,22 @@ class DatabaseWebAPI:
         
                 // 显示消息
                 function showMessage(element, message, isError = false) {
-                    const alertClass = isError ? 'alert-error' : 'alert-success';
-                    element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
-                    setTimeout(() => {
-                        if (element.querySelector('.alert')) {
-                            element.querySelector('.alert').remove();
-                        }
-                    }, 5000);
+                    if (!element) {
+                        console.warn('showMessage: 目标元素为null');
+                        return;
+                    }
+                    
+                    try {
+                        const alertClass = isError ? 'alert-error' : 'alert-success';
+                        element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+                        setTimeout(() => {
+                            if (element && element.querySelector('.alert')) {
+                                element.querySelector('.alert').remove();
+                            }
+                        }, 5000);
+                    } catch (e) {
+                        console.warn('showMessage 执行失败:', e);
+                    }
                 }
 
                 // 登录
@@ -1083,6 +1092,8 @@ class DatabaseWebAPI:
 
                 // 切换标签页
                 function showTab(tabId) {
+                    console.log('切换到标签页:', tabId);
+                    
                     // 隐藏所有标签页内容
                     const contents = document.querySelectorAll('.tab-content');
                     contents.forEach(content => content.classList.remove('active'));
@@ -1092,21 +1103,38 @@ class DatabaseWebAPI:
                     tabs.forEach(tab => tab.classList.remove('active'));
 
                     // 显示选中的标签页
-                    document.getElementById(tabId).classList.add('active');
+                    const targetContent = document.getElementById(tabId);
+                    if (targetContent) {
+                        targetContent.classList.add('active');
+                        console.log('显示内容区域:', tabId);
+                    } else {
+                        console.error('未找到内容区域:', tabId);
+                    }
 
                     // 激活对应的标签
+                    const tabText = getTabText(tabId);
+                    console.log('查找标签文本:', tabText);
                     const activeTab = Array.from(tabs).find(tab => 
-                        tab.textContent.includes(getTabText(tabId))
+                        tab.textContent.includes(tabText)
                     );
-                    if (activeTab) activeTab.classList.add('active');
+                    if (activeTab) {
+                        activeTab.classList.add('active');
+                        console.log('激活标签:', activeTab.textContent);
+                    } else {
+                        console.error('未找到对应的标签:', tabText);
+                    }
 
                     // 关闭侧边栏
-                    document.getElementById('sidebar').classList.remove('open');
+                    const sidebar = document.getElementById('sidebar');
+                    if (sidebar) {
+                        sidebar.classList.remove('open');
+                    }
                 }
 
                 function getTabText(tabId) {
                     const map = {
                         'sql-tab': 'SQL 查询',
+                        'transaction-tab': '事务管理',
                         'tables-tab': '表管理',
                         'views-tab': '视图管理',
                         'indexes-tab': '索引管理',
@@ -1192,7 +1220,13 @@ class DatabaseWebAPI:
                                     if (result.data[0].help) {
                                         // 帮助命令
                                         html += `<div class="shell-help"><pre>${result.data[0].help}</pre></div>`;
-                                    } else if (Array.isArray(result.data[0])) {
+                                    } else if (result.data[0].current_user) {
+                                        // whoami命令
+                                        html += `<div class="result-table"><table>`;
+                                        html += '<thead><tr><th>当前用户</th></tr></thead>';
+                                        html += '<tbody><tr><td>' + result.data[0].current_user + '</td></tr></tbody>';
+                                        html += '</table></div>';
+                                    }else if (Array.isArray(result.data[0])) {
                                         // 数组数据（如会话列表、表列表等）
                                         html += '<div class="result-table"><table>';
                                         html += '<thead><tr>';
@@ -1209,11 +1243,19 @@ class DatabaseWebAPI:
                                         });
                                         html += '</tbody></table></div>';
                                     } else {
-                                        // 对象数据
+                                        // 其他数据 - 修正这里的处理逻辑
                                         html += '<div class="result-table"><table>';
-                                        html += '<tbody>';
-                                        Object.entries(result.data[0]).forEach(([key, value]) => {
-                                            html += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
+                                        html += '<thead><tr>';
+                                        Object.keys(result.data[0]).forEach(key => {
+                                            html += `<th>${key}</th>`;
+                                        });
+                                        html += '</tr></thead><tbody>';
+                                        result.data.forEach(item => {
+                                            html += '<tr>';
+                                            Object.values(item).forEach(value => {
+                                                html += `<td>${value}</td>`;
+                                            });
+                                            html += '</tr>';
                                         });
                                         html += '</tbody></table></div>';
                                     }
@@ -1251,6 +1293,23 @@ class DatabaseWebAPI:
                         }
                         
                         resultEl.innerHTML = finalHtml;
+                        
+                        // 检查是否执行了事务相关的SQL，如果是则刷新事务状态
+                        const transactionKeywords = ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK', 'SET AUTOCOMMIT', 'SET SESSION TRANSACTION'];
+                        const upperSql = sql.toUpperCase();
+                        const hasTransactionCommand = transactionKeywords.some(keyword => upperSql.includes(keyword));
+                        
+                        if (hasTransactionCommand) {
+                            console.log('检测到事务相关命令，刷新事务状态');
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 500);
+                        } else {
+                            // 对于其他SQL命令，也刷新事务状态以确保一致性
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 200);
+                        }
                         
                     } catch (error) {
                         showMessage(resultEl, '请求失败: ' + error.message, true);
@@ -1676,6 +1735,25 @@ class DatabaseWebAPI:
 
                 // ==================== 事务管理功能 ====================
 
+                // 初始化事务按钮状态
+                function initializeTransactionButtons() {
+                    console.log('初始化事务按钮状态 - 所有按钮启用');
+                    const beginBtn = document.getElementById('begin-btn');
+                    const commitBtn = document.getElementById('commit-btn');
+                    const rollbackBtn = document.getElementById('rollback-btn');
+                    
+                    if (beginBtn && commitBtn && rollbackBtn) {
+                        // 所有按钮都启用，在执行时再检查状态
+                        beginBtn.disabled = false;
+                        commitBtn.disabled = false;
+                        rollbackBtn.disabled = false;
+                        console.log('所有按钮已启用');
+                    } else {
+                        console.error('无法找到事务按钮元素');
+                    }
+                }
+
+
                 // 刷新事务状态
                 async function refreshTransactionStatus() {
                     try {
@@ -1685,35 +1763,23 @@ class DatabaseWebAPI:
                             credentials: 'include'
                         });
 
+                        if (!response.ok) {
+                            console.error('获取事务状态失败:', response.status, response.statusText);
+                            return;
+                        }
+
                         const result = await response.json();
                         console.log('事务状态响应:', result);
 
                         if (result.success) {
                             const data = result.data;
+                            console.log('事务状态数据:', data);
+                            
                             document.getElementById('session-id').textContent = data.session_id || '-';
                             document.getElementById('autocommit-status').textContent = data.autocommit ? '是' : '否';
                             document.getElementById('transaction-state').textContent = data.in_transaction ? '进行中' : '未开始';
                             document.getElementById('isolation-level').textContent = data.isolation_level || '-';
                             document.getElementById('current-user-txn').textContent = data.current_user || '-';
-
-                            // 更新按钮状态
-                            const beginBtn = document.getElementById('begin-btn');
-                            const commitBtn = document.getElementById('commit-btn');
-                            const rollbackBtn = document.getElementById('rollback-btn');
-
-                            console.log('更新按钮状态，事务状态:', data.in_transaction);
-                            
-                            if (data.in_transaction) {
-                                beginBtn.disabled = true;
-                                commitBtn.disabled = false;
-                                rollbackBtn.disabled = false;
-                                console.log('禁用开始事务按钮');
-                            } else {
-                                beginBtn.disabled = false;
-                                commitBtn.disabled = true;
-                                rollbackBtn.disabled = true;
-                                console.log('启用开始事务按钮');
-                            }
 
                             // 更新自动提交复选框
                             document.getElementById('autocommit-checkbox').checked = data.autocommit;
@@ -1731,17 +1797,35 @@ class DatabaseWebAPI:
 
                 // 开始事务
                 async function beginTransaction() {
+                    console.log('开始事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前已有活动事务，请先提交或回滚', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/begin', {
                             method: 'POST',
                             credentials: 'include'
                         });
 
                         const result = await response.json();
+                        console.log('开始事务响应:', result);
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已开始', false);
-                            refreshTransactionStatus();
+                            // 刷新事务状态
+                            setTimeout(() => {
+                                console.log('强制刷新事务状态');
+                                refreshTransactionStatus();
+                            }, 200);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '开始事务失败: ' + result.message, true);
                         }
@@ -1752,7 +1836,20 @@ class DatabaseWebAPI:
 
                 // 提交事务
                 async function commitTransaction() {
+                    console.log('提交事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && !statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前没有活动事务，无法提交', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/commit', {
                             method: 'POST',
                             credentials: 'include'
@@ -1762,7 +1859,10 @@ class DatabaseWebAPI:
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已提交', false);
-                            refreshTransactionStatus();
+                            // 刷新状态
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 100);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '提交事务失败: ' + result.message, true);
                         }
@@ -1773,7 +1873,20 @@ class DatabaseWebAPI:
 
                 // 回滚事务
                 async function rollbackTransaction() {
+                    console.log('回滚事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && !statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前没有活动事务，无法回滚', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/rollback', {
                             method: 'POST',
                             credentials: 'include'
@@ -1783,7 +1896,10 @@ class DatabaseWebAPI:
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已回滚', false);
-                            refreshTransactionStatus();
+                            // 刷新状态
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 100);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '回滚事务失败: ' + result.message, true);
                         }
@@ -2182,6 +2298,9 @@ class DatabaseWebAPI:
                         }
                     }, 1000);
                     
+                    // 初始化按钮状态
+                    initializeTransactionButtons();
+                    
                     // 添加调试信息
                     console.log('页面加载完成，准备刷新事务状态');
                 });
@@ -2466,7 +2585,7 @@ class DatabaseWebAPI:
                         'success': False,
                         'message': 'SQL语句不能为空'
                     }), 400
-                
+
                 # --- 综合修复：自动清理和校正常见的输入问题 ---
                 # 1. 将不可见的非中断空格(U+00A0)替换为标准空格
                 sql = sql.replace('\u00A0', ' ')
@@ -2476,7 +2595,6 @@ class DatabaseWebAPI:
                 sql = sql.strip()
                 # --- 修复结束 ---
 
-            
                 # 按分号分割语句，并过滤空语句
                 stmts = [s.strip() for s in sql.split(';') if s.strip()]
                 if not stmts:
@@ -2486,21 +2604,22 @@ class DatabaseWebAPI:
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
 
-
                 # 检查是否是Shell命令（以反斜杠开头）
-                if sql.strip().startswith('\\') or sql.strip().startswith('\\\\'):
+                # 检查是否是Shell命令
+                if sql.strip().startswith('\\') or sql.strip().startswith('\\\\') or self._is_shell_command(sql):
                     result = self._handle_shell_command(sql.strip(), db)
-                else:
+                    return jsonify(result)  # 直接返回，不继续处理
+
                 # 将SQL按分号分割成多个语句
-                    stmts = [s.strip() for s in sql.split(';') if s.strip()]
-                    if not stmts:
-                            result = {"type": "EMPTY", "message": "请输入SQL语句."}
-                    else:
-                        # 循环执行每个语句，通常客户端只显示最后一条语句的结果
-                            for stmt in stmts:
-                            # 执行器可能需要以分号结尾
-                                full_stmt = stmt + ';'
-                                result = db.execute_sql(full_stmt)
+                stmts = [s.strip() for s in sql.split(';') if s.strip()]
+                if not stmts:
+                    result = {"type": "EMPTY", "message": "请输入SQL语句."}
+                else:
+                    # 循环执行每个语句，通常客户端只显示最后一条语句的结果
+                    for stmt in stmts:
+                        # 执行器可能需要以分号结尾
+                        full_stmt = stmt + ';'
+                        result = db.execute_sql(full_stmt)
 
                     if not isinstance(result, dict):
                         result = {'success': False, 'message': '执行结果格式错误'}
@@ -2510,11 +2629,11 @@ class DatabaseWebAPI:
 
                     # 格式化SELECT查询结果
                     if (result.get('success') and
-                        result.get('type') == 'SELECT' and
-                        'data' in result and
-                        isinstance(result['data'], list)):
+                            result.get('type') == 'SELECT' and
+                            'data' in result and
+                            isinstance(result['data'], list)):
                         result['formatted'] = self._format_select_for_web(result['data'])
-                    
+
                     all_results.append(result)
 
                 # 如果只有一条语句，为保持兼容性，直接返回结果
@@ -2527,7 +2646,7 @@ class DatabaseWebAPI:
                         'message': f'成功执行 {len(all_results)} 条语句。',
                         'results': all_results
                     })
-          
+
 
             except Exception as e:
                 logger.error(f"SQL执行错误: {e}")
@@ -2536,7 +2655,6 @@ class DatabaseWebAPI:
                     'message': f'SQL执行失败: {str(e)}',
                     'error': str(e)
                 }), 500
-
         @self.app.route('/api/tables', methods=['GET'])
         def list_tables():
             """获取表列表"""
@@ -2833,7 +2951,7 @@ class DatabaseWebAPI:
 
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
-                
+
                 # 直接执行这个完整的、由客户端保证语法正确的SQL语句
                 result = db.execute_sql(sql)
 
@@ -2943,7 +3061,7 @@ class DatabaseWebAPI:
                 return jsonify({'success': False, 'error': str(e)})
 
         # ==================== 事务管理API ====================
-        
+
         @self.app.route('/api/transaction/begin', methods=['POST'])
         def begin_transaction():
             """开始事务"""
@@ -3004,32 +3122,39 @@ class DatabaseWebAPI:
 
             try:
                 session_id = self._get_session_id()
+                logger.info(f"获取事务状态，会话ID: {session_id}")
+
                 db = self._get_db(session_id)
-                
+                logger.info(f"数据库连接成功")
+
                 # 获取当前会话信息
                 sessions = db.list_sessions()
+                logger.info(f"所有会话: {sessions}")
+
                 current_session = None
                 for s in sessions:
                     if s['current']:
                         current_session = s
                         break
-                
+
                 if current_session:
+                    logger.info(f"当前会话信息: {current_session}")
                     return jsonify({
                         'success': True,
                         'data': {
                             'session_id': current_session['session_id'],
                             'autocommit': current_session['autocommit'],
-                            'in_transaction': current_session['in_txn'],
+                            'in_transaction': current_session['in_txn'],  # 保持字段名一致
                             'isolation_level': current_session['isolation'],
                             'current_user': session.get('username', 'unknown')
                         }
                     })
                 else:
+                    logger.error("未找到当前会话")
                     return jsonify({'success': False, 'message': '无法获取会话状态'}), 500
 
             except Exception as e:
-                logger.error(f"获取事务状态失败: {e}")
+                logger.error(f"获取事务状态失败: {e}", exc_info=True)
                 return jsonify({'success': False, 'message': f'获取事务状态失败: {str(e)}'}), 500
 
         @self.app.route('/api/transaction/isolation', methods=['POST'])
@@ -3046,10 +3171,10 @@ class DatabaseWebAPI:
 
                 level = data.get('level', '').strip().upper()
                 valid_levels = ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE']
-                
+
                 if level not in valid_levels:
                     return jsonify({
-                        'success': False, 
+                        'success': False,
                         'message': f'无效的隔离级别。支持: {", ".join(valid_levels)}'
                     }), 400
 
@@ -3095,7 +3220,7 @@ class DatabaseWebAPI:
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
                 sessions = db.list_sessions()
-                
+
                 return jsonify({
                     'success': True,
                     'data': sessions
@@ -3136,64 +3261,710 @@ class DatabaseWebAPI:
             except Exception as e:
                 return jsonify({'success': False, 'suggestions': [], 'error': str(e)})
 
+    def _is_shell_command(self, sql: str) -> bool:
+        """判断是否是Shell命令"""
+        sql_lower = sql.lower().strip()
+
+        # 只有这些命令是shell命令，不需要反斜杠
+        shell_commands = [
+            'whoami', 'users', 'tables', 'views', 'indexes', 'stats',
+            'triggers', 'help', 'clear'
+        ]
+
+        # 检查是否是简单的shell命令
+        if sql_lower in shell_commands:
+            return True
+
+        # 检查是否是带参数的shell命令
+        shell_command_patterns = [
+            'show privileges ', 'describe ', 'desc ', 'show ', 'indexes ',
+            'describe view ', 'describe trigger ',
+            'help sql', 'help views', 'show tables', 'show views', 'show triggers',
+            'show indexes', 'show transaction status', 'txn status',
+            'show autocommit', 'show isolation level'
+        ]
+
+        for pattern in shell_command_patterns:
+            if sql_lower.startswith(pattern):
+                return True
+
+        # session 命令需要反斜杠，单独处理
+        if sql_lower.startswith('\\session') or sql_lower.startswith('session '):
+            return True
+
+        return False
+
     def _handle_shell_command(self, command: str, db) -> dict:
-        """处理Shell命令"""
+        """处理Shell命令 - 完整实现"""
         command = command.strip()
-        
-        # 会话管理命令
-        if command.startswith("\\session") or command.startswith("\\\\session"):
-            parts = command.split()
-            if len(parts) == 1 or parts[1] == "list":
-                return self._handle_session_list(db)
-            elif parts[1] == "new":
-                return self._handle_session_new(db)
-            elif parts[1] == "use" and len(parts) > 2:
-                session_id = int(parts[2])
-                return self._handle_session_use(session_id, db)
-            elif parts[1] in ["info", "status"]:
-                return self._handle_session_info(db)
-            else:
-                return {
-                    "success": False,
-                    "message": "用法: \\session [list|new|use <id>|info]",
-                    "data": []
-                }
-        
-        # 表管理命令
-        elif command.lower() in ["\\tables", "\\show tables", "\\\\tables", "\\\\show tables"]:
-            return self._handle_show_tables(db)
-        
-        # 视图管理命令
-        elif command.lower() in ["\\views", "\\show views", "\\\\views", "\\\\show views"]:
-            return self._handle_show_views(db)
-        
-        # 索引管理命令
-        elif command.lower() in ["\\indexes", "\\show indexes", "\\\\indexes", "\\\\show indexes"]:
-            return self._handle_show_indexes(db)
-        
-        # 统计信息命令
-        elif command.lower() in ["\\stats", "\\show stats", "\\\\stats", "\\\\show stats"]:
-            return self._handle_show_stats(db)
-        
+
+        # 移除前导的反斜杠
+        if command.startswith('\\\\'):
+            command = command[2:]
+        elif command.startswith('\\'):
+            command = command[1:]
+
         # 用户管理命令
-        elif command.lower() in ["\\users", "\\\\users"]:
-            return self._handle_show_users(db)
-        
-        # 当前用户命令
-        elif command.lower() in ["\\whoami", "\\\\whoami"]:
+        if command.lower() == "whoami":
             return self._handle_whoami(db)
-        
+
+        elif command.lower() == "users":
+            return self._handle_show_users(db)
+
+        elif command.lower().startswith("show privileges "):
+            parts = command.split()
+            if len(parts) >= 3:
+                username = parts[2]
+                return self._handle_show_user_privileges(username, db)
+            else:
+                return {"success": False, "message": "用法: show privileges <username>", "data": []}
+
+        # 数据库查询命令
+        elif command.lower() in ["tables", "show tables"]:
+            return self._handle_show_tables(db)
+
+        elif command.lower() in ["views", "show views"]:
+            return self._handle_show_views(db)
+
+        elif command.lower().startswith("describe ") or command.lower().startswith("desc "):
+            parts = command.split()
+            if len(parts) >= 2:
+                table_name = parts[1]
+                return self._handle_describe_table(table_name, db)
+            else:
+                return {"success": False, "message": "用法: describe <table_name>", "data": []}
+
+        elif command.lower().startswith("describe view "):
+            parts = command.split()
+            if len(parts) >= 3:
+                view_name = parts[2]
+                return self._handle_describe_view(view_name, db)
+            else:
+                return {"success": False, "message": "用法: describe view <view_name>", "data": []}
+
+        elif command.lower().startswith("show "):
+            parts = command.split()
+            if len(parts) >= 2:
+                table_name = parts[1]
+                return self._handle_show_table_data(table_name, db)
+            else:
+                return {"success": False, "message": "用法: show <table_name>", "data": []}
+
+        elif command.lower() in ["indexes", "show indexes"]:
+            return self._handle_show_indexes(db)
+
+        elif command.lower().startswith("indexes "):
+            parts = command.split()
+            if len(parts) >= 2:
+                table_name = parts[1]
+                return self._handle_show_table_indexes(table_name, db)
+            else:
+                return {"success": False, "message": "用法: indexes <table_name>", "data": []}
+
+        elif command.lower() == "stats":
+            return self._handle_show_stats(db)
+
+        # 会话管理命令
+        elif command.startswith("\\session") or command.startswith("\\\\session"):
+            return self._handle_session_command(command, db)
+
+        # 事务管理命令
+        elif command.lower() == "show transaction status" or command.lower() == "txn status":
+            return self._handle_show_transaction_status(db)
+
+        elif command.lower() == "show autocommit":
+            return self._handle_show_autocommit(db)
+
+        elif command.lower() == "show isolation level":
+            return self._handle_show_isolation_level(db)
+
+        # 触发器管理命令
+        elif command.lower() in ["triggers", "show triggers"]:
+            return self._handle_show_triggers(db)
+
+        elif command.lower().startswith("describe trigger "):
+            parts = command.split()
+            if len(parts) >= 3:
+                trigger_name = parts[2]
+                return self._handle_describe_trigger(trigger_name, db)
+            else:
+                return {"success": False, "message": "用法: describe trigger <trigger_name>", "data": []}
+
         # 帮助命令
-        elif command.lower() in ["\\help", "\\?", "\\\\help", "\\\\?"]:
+        elif command.lower() in ["help", "?"]:
             return self._handle_help()
-        
+
+        elif command.lower() == "help sql":
+            return self._handle_help_sql()
+
+        elif command.lower() == "help views":
+            return self._handle_help_views()
+
+        # 系统控制命令
+        elif command.lower() == "clear":
+            return {"success": True, "message": "清屏命令已执行", "data": [], "type": "SHELL_COMMAND"}
+
         else:
             return {
                 "success": False,
-                "message": f"未知的Shell命令: {command}",
+                "message": f"未知的Shell命令: {command}。输入 'help' 查看可用命令。",
                 "data": []
             }
-    
+
+    # 具体的命令处理函数
+
+    def _handle_whoami(self, db) -> dict:
+        """处理 whoami 命令"""
+        try:
+            current_user = db.get_current_user()
+            return {
+                "success": True,
+                "message": f"当前登录用户: {current_user}",
+                "data": [{"current_user": current_user}],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取当前用户失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_users(self, db) -> dict:
+        """处理 users 命令"""
+        try:
+            users = list(db.catalog.users.keys()) if hasattr(db.catalog, 'users') else []
+            return {
+                "success": True,
+                "message": f"数据库用户列表 (共{len(users)}个)",
+                "data": [{"user": user} for user in users],  # 转换为对象列表
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取用户列表失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_user_privileges(self, username: str, db) -> dict:
+        """处理 show privileges 命令"""
+        try:
+            privileges = db.catalog.get_user_privileges(username)
+            if not privileges:
+                return {
+                    "success": True,
+                    "message": f"用户 {username} 没有任何权限",
+                    "data": [],
+                    "type": "SHELL_COMMAND"
+                }
+
+            data = []
+            for table, privs in privileges.items():
+                data.append({
+                    "table": table,
+                    "privileges": ", ".join(privs)
+                })
+
+            return {
+                "success": True,
+                "message": f"用户 {username} 的权限",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取用户权限失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_tables(self, db) -> dict:
+        """处理 tables 命令"""
+        try:
+            tables = db.list_tables()
+            return {
+                "success": True,
+                "message": f"数据库中的表 (共{len(tables)}个)",
+                "data": [{"表名": table} for table in tables],  # 转换为对象列表
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取表列表失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_views(self, db) -> dict:
+        """处理 views 命令"""
+        try:
+            views = db.list_views() if hasattr(db, "list_views") else []
+            return {
+                "success": True,
+                "message": f"数据库中的视图 (共{len(views)}个)",
+                "data": [{"视图名": view} for view in views],  # 转换为对象列表
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取视图列表失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_describe_table(self, table_name: str, db) -> dict:
+        """处理 describe table 命令"""
+        try:
+            table_info = db.get_table_info(table_name)
+            if "error" in table_info:
+                return {
+                    "success": False,
+                    "message": table_info["error"],
+                    "data": []
+                }
+
+            # 转换表结构为易于显示的格式
+            data = []
+            for col in table_info["columns"]:
+                constraints = []
+                if col["primary_key"]:
+                    constraints.append("PRIMARY KEY")
+                if not col["nullable"]:
+                    constraints.append("NOT NULL")
+
+                type_str = col["type"]
+                if col["max_length"]:
+                    type_str += f"({col['max_length']})"
+
+                data.append({
+                    "column_name": col["name"],
+                    "data_type": type_str,
+                    "constraints": ", ".join(constraints) if constraints else "无"
+                })
+
+            return {
+                "success": True,
+                "message": f"表 '{table_name}' 的结构信息 (记录数: {table_info['record_count']})",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取表结构失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_describe_view(self, view_name: str, db) -> dict:
+        """处理 describe view 命令"""
+        try:
+            view_info = db.get_view_info(view_name)
+            if "error" in view_info:
+                return {
+                    "success": False,
+                    "message": view_info["error"],
+                    "data": []
+                }
+
+            return {
+                "success": True,
+                "message": f"视图 '{view_name}' 的定义",
+                "data": [{"definition": view_info["definition"]}],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取视图定义失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_table_data(self, table_name: str, db) -> dict:
+        """处理 show table 命令"""
+        try:
+            # 执行 SELECT * FROM table 查询
+            result = db.execute_sql(f"SELECT * FROM {table_name};")
+            if result.get("success"):
+                data_count = len(result.get("data", []))
+                return {
+                    "success": True,
+                    "message": f"表 '{table_name}' 的数据内容 (共{data_count}行)",
+                    "data": result.get("data", []),
+                    "type": "SHELL_COMMAND"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": result.get("message", "查询失败"),
+                    "data": []
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"查询表数据失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_indexes(self, db) -> dict:
+        """处理 indexes 命令 - 显示所有索引"""
+        try:
+            all_indexes = db.list_all_indexes()
+            data = []
+            for table_name, indexes in all_indexes.items():
+                for index_name, info in indexes.items():
+                    data.append({
+                        "表名": table_name,
+                        "索引名": index_name,
+                        "列名": info["column"],
+                        "类型": "唯一索引" if info["unique"] else "普通索引"
+                    })
+
+            return {
+                "success": True,
+                "message": f"数据库中的所有索引 (共{len(data)}个)",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取索引信息失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_table_indexes(self, table_name: str, db) -> dict:
+        """处理 indexes table_name 命令 - 显示特定表的索引"""
+        try:
+            indexes_result = db.list_indexes(table_name)
+            if not indexes_result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"获取表 '{table_name}' 的索引失败",
+                    "data": []
+                }
+
+            indexes = indexes_result.get("indexes", [])
+            data = []
+            for index in indexes:
+                data.append({
+                    "index_name": index["index_name"],
+                    "column_name": index["column_name"],
+                    "type": "唯一索引" if index["is_unique"] else "普通索引"
+                })
+
+            return {
+                "success": True,
+                "message": f"表 '{table_name}' 的索引 (共{len(data)}个)",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取表索引失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_stats(self, db) -> dict:
+        """处理 stats 命令"""
+        try:
+            stats = db.get_database_stats()
+
+            # 转换统计信息为易于显示的格式
+            data = []
+            for key, value in stats.items():
+                if key == 'cache_stats' and isinstance(value, dict):
+                    # 展开缓存统计信息
+                    for cache_key, cache_value in value.items():
+                        data.append({
+                            "项目": f"缓存_{cache_key}",
+                            "值": str(cache_value)
+                        })
+                else:
+                    translated_key = self._translate_stat_key(key)
+                    data.append({
+                        "项目": translated_key,
+                        "值": str(value)
+                    })
+
+            return {
+                "success": True,
+                "message": "数据库统计信息",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取统计信息失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_session_command(self, command: str, db) -> dict:
+        """处理 session 系列命令"""
+        parts = command.split()
+        if len(parts) == 1 or parts[1] == "list":
+            return self._handle_session_list(db)
+        elif parts[1] == "new":
+            return self._handle_session_new(db)
+        elif parts[1] == "use" and len(parts) > 2:
+            session_id = int(parts[2])
+            return self._handle_session_use(session_id, db)
+        elif parts[1] in ["info", "status"]:
+            return self._handle_session_info(db)
+        else:
+            return {
+                "success": False,
+                "message": "用法: \\session [list|new|use <id>|info]",
+                "data": []
+            }
+
+    def _handle_show_transaction_status(self, db) -> dict:
+        """处理 show transaction status 命令"""
+        try:
+            sessions = db.list_sessions()
+            current_session = next((s for s in sessions if s["current"]), None)
+
+            if current_session:
+                data = [{
+                    "会话ID": current_session['session_id'],
+                    "自动提交": '是' if current_session['autocommit'] else '否',
+                    "事务状态": '进行中' if current_session['in_txn'] else '未开始',
+                    "隔离级别": current_session['isolation'],
+                    "当前用户": db.get_current_user()
+                }]
+
+                return {
+                    "success": True,
+                    "message": "事务状态信息",
+                    "data": data,
+                    "type": "SHELL_COMMAND"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "无法获取事务状态",
+                    "data": []
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取事务状态失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_autocommit(self, db) -> dict:
+        """处理 show autocommit 命令"""
+        try:
+            current_session = db.sql_executor
+            autocommit = current_session.txn.autocommit()
+            return {
+                "success": True,
+                "message": f"autocommit = {'1' if autocommit else '0'}",
+                "data": [{"autocommit": '1' if autocommit else '0'}],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取自动提交状态失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_isolation_level(self, db) -> dict:
+        """处理 show isolation level 命令"""
+        try:
+            current_session = db.sql_executor
+            isolation = current_session.txn.isolation_level()
+            return {
+                "success": True,
+                "message": f"isolation level = {isolation}",
+                "data": [{"isolation_level": isolation}],
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取隔离级别失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_show_triggers(self, db) -> dict:
+        """处理 triggers 命令"""
+        try:
+            triggers = db.executor.catalog.list_triggers()
+            data = []
+            for trigger in triggers:
+                data.append({
+                    "trigger_name": trigger['name'],
+                    "table_name": trigger['table_name'],
+                    "timing": trigger['timing'],
+                    "event": trigger['event']
+                })
+
+            return {
+                "success": True,
+                "message": f"数据库中的触发器 (共{len(triggers)}个)",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取触发器列表失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_describe_trigger(self, trigger_name: str, db) -> dict:
+        """处理 describe trigger 命令"""
+        try:
+            trigger = db.executor.catalog.get_trigger(trigger_name)
+            if not trigger:
+                return {
+                    "success": False,
+                    "message": f"触发器 '{trigger_name}' 不存在",
+                    "data": []
+                }
+
+            data = [{
+                "名称": trigger['name'],
+                "时机": trigger['timing'],
+                "事件": trigger['event'],
+                "表名": trigger['table_name'],
+                "触发器体": trigger['statement']
+            }]
+
+            return {
+                "success": True,
+                "message": f"触发器 '{trigger_name}' 详细信息",
+                "data": data,
+                "type": "SHELL_COMMAND"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取触发器信息失败: {str(e)}",
+                "data": []
+            }
+
+    def _handle_help(self) -> dict:
+        """处理 help 命令"""
+        help_text = """MiniSQL Web Shell 命令帮助:
+
+    👤 用户管理:
+    whoami                          - 显示当前用户
+    users                           - 列出所有用户  
+    show privileges [username]           - 查看用户权限
+
+    📋 数据库管理:
+    tables                          - 列出所有表
+    views                           - 列出所有视图
+    describe(desc) [table]                - 查看表结构
+    describe view [view]            - 查看视图定义
+    show [table]                    - 查看表数据
+    indexes                         - 列出所有索引
+    indexes [table]                 - 查看表的索引
+    stats                           - 显示数据库统计信息
+
+    🔄 事务管理:
+    show transaction status         - 显示事务状态
+    show autocommit                 - 显示自动提交状态
+    show isolation level            - 显示隔离级别
+
+    ⚡ 触发器:
+    triggers                        - 列出所有触发器
+    describe trigger [name]         - 查看触发器详情
+
+    📋 会话管理:
+    \\session list                   - 列出所有会话
+    \\session new                    - 创建新会话
+    \\session use [id]               - 切换会话
+    \\session info                   - 显示当前会话信息
+
+    ❓ 帮助:
+    help                            - 显示此帮助
+    help sql                        - 显示SQL帮助
+    help views                      - 显示视图帮助
+
+    💡 提示: 所有标准SQL语句也支持，如 SELECT, INSERT, CREATE TABLE 等"""
+
+        return {
+            "success": True,
+            "message": "Shell命令帮助",
+            "data": [{"help": help_text.strip()}],
+            "type": "SHELL_COMMAND"
+        }
+
+    def _handle_help_sql(self) -> dict:
+        """处理 help sql 命令"""
+        help_text = """SQL语句帮助:
+
+    📋 数据定义语言 (DDL):
+    CREATE TABLE table_name (col1 type, col2 type, ...)  - 创建表
+    ALTER TABLE table_name ADD COLUMN col type           - 添加列
+    ALTER TABLE table_name DROP COLUMN col               - 删除列
+    DROP TABLE table_name                                - 删除表
+
+    🔍 索引管理:
+    CREATE INDEX idx ON table (column)          - 创建索引
+    CREATE UNIQUE INDEX idx ON table (column)   - 创建唯一索引
+    DROP INDEX idx                              - 删除索引
+
+    👁️ 视图管理:
+    CREATE VIEW v AS [select]                            - 创建视图
+    DROP VIEW v                                          - 删除视图
+
+    📊 数据操作语言 (DML):
+    INSERT INTO table_name VALUES (val1, val2, ...)     - 插入数据
+    SELECT columns FROM table_name [WHERE condition]    - 查询数据
+    UPDATE table_name SET col=val [WHERE ...]           - 更新数据
+    DELETE FROM table_name [WHERE ...]                  - 删除数据
+
+    🔄 事务控制:
+    BEGIN | START TRANSACTION                            - 开始事务
+    COMMIT                                               - 提交事务
+    ROLLBACK                                             - 回滚事务
+    SET AUTOCOMMIT = 0|1                                 - 设置自动提交
+
+    💡 数据类型:
+    INTEGER, VARCHAR(n), FLOAT, BOOLEAN, DATE, TIME, DATETIME"""
+
+        return {
+            "success": True,
+            "message": "SQL语句帮助",
+            "data": [{"help": help_text.strip()}],
+            "type": "SHELL_COMMAND"
+        }
+
+    def _handle_help_views(self) -> dict:
+        """处理 help views 命令"""
+        help_text = """视图管理帮助:
+
+    👁️ 视图命令:
+    views | show views              - 列出所有视图
+    describe view [name]            - 查看视图定义
+    CREATE VIEW v AS [select]       - 创建视图
+    DROP VIEW v                     - 删除视图
+
+    💡 视图示例:
+    CREATE VIEW adult AS SELECT id, name FROM users WHERE age >= 18;
+    CREATE VIEW alice AS SELECT * FROM adult WHERE name = 'Alice';
+    SELECT * FROM alice;
+
+    📋 视图特性:
+    - 视图是虚拟表，基于SELECT查询定义
+    - 可以像表一样进行查询操作
+    - 支持嵌套视图（视图基于其他视图创建）
+    - 提供数据抽象和安全控制"""
+
+        return {
+            "success": True,
+            "message": "视图管理帮助",
+            "data": [{"help": help_text.strip()}],
+            "type": "SHELL_COMMAND"
+        }
+
     def _handle_session_list(self, db) -> dict:
         """处理 \\session list 命令"""
         try:
@@ -3210,7 +3981,7 @@ class DatabaseWebAPI:
                 "message": f"获取会话列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_session_new(self, db) -> dict:
         """处理 \\session new 命令"""
         try:
@@ -3227,14 +3998,14 @@ class DatabaseWebAPI:
                 "message": f"创建新会话失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_session_use(self, session_id: int, db) -> dict:
         """处理 \\session use <id> 命令"""
         try:
             # 检查会话是否存在
             sessions = db.list_sessions()
             valid_session_ids = [s['id'] for s in sessions]
-            
+
             if session_id not in valid_session_ids:
                 return {
                     "success": False,
@@ -3242,13 +4013,13 @@ class DatabaseWebAPI:
                     "data": [],
                     "type": "SHELL_COMMAND"
                 }
-            
+
             # 真正切换到目标会话
             web_session_id = self._get_session_id()
             if not hasattr(self, '_user_selected_sessions'):
                 self._user_selected_sessions = {}
             self._user_selected_sessions[web_session_id] = session_id
-            
+
             # 真正切换数据库会话
             success = db.use_session(session_id)
             if not success:
@@ -3258,10 +4029,10 @@ class DatabaseWebAPI:
                     "data": [],
                     "type": "SHELL_COMMAND"
                 }
-            
+
             # 获取目标会话的信息
             target_session = next((s for s in sessions if s['id'] == session_id), None)
-            
+
             return {
                 "success": True,
                 "message": f"已成功切换到会话 {session_id}。现在可以在此会话中开始事务。",
@@ -3279,13 +4050,13 @@ class DatabaseWebAPI:
                 "data": [],
                 "type": "SHELL_COMMAND"
             }
-    
+
     def _handle_session_info(self, db) -> dict:
         """处理 \\session info 命令"""
         try:
             sessions = db.list_sessions()
             current_session = next((s for s in sessions if s["current"]), None)
-            
+
             if current_session:
                 return {
                     "success": True,
@@ -3305,15 +4076,15 @@ class DatabaseWebAPI:
                 "message": f"获取会话信息失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_tables(self, db) -> dict:
-        """处理 \\tables 命令"""
+        """处理 tables 命令"""
         try:
             tables = db.list_tables()
             return {
                 "success": True,
                 "message": f"数据库中的表 (共{len(tables)}个)",
-                "data": tables,
+                "data": [{"表名": table} for table in tables],  # 这里必须转换！！！
                 "type": "SHELL_COMMAND"
             }
         except Exception as e:
@@ -3322,7 +4093,7 @@ class DatabaseWebAPI:
                 "message": f"获取表列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_views(self, db) -> dict:
         """处理 \\views 命令"""
         try:
@@ -3339,7 +4110,7 @@ class DatabaseWebAPI:
                 "message": f"获取视图列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_indexes(self, db) -> dict:
         """处理 \\indexes 命令"""
         try:
@@ -3363,7 +4134,7 @@ class DatabaseWebAPI:
                 "message": f"获取索引列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_stats(self, db) -> dict:
         """处理 \\stats 命令"""
         try:
@@ -3380,7 +4151,7 @@ class DatabaseWebAPI:
                 "message": f"获取统计信息失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_users(self, db) -> dict:
         """处理 \\users 命令"""
         try:
@@ -3389,7 +4160,7 @@ class DatabaseWebAPI:
             return {
                 "success": True,
                 "message": f"数据库用户列表 (共{len(users)}个)",
-                "data": users,
+                "data": [{"用户名": user} for user in users],
                 "type": "SHELL_COMMAND"
             }
         except Exception as e:
@@ -3398,7 +4169,7 @@ class DatabaseWebAPI:
                 "message": f"获取用户列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_whoami(self, db) -> dict:
         """处理 \\whoami 命令"""
         try:
@@ -3415,44 +4186,6 @@ class DatabaseWebAPI:
                 "message": f"获取当前用户失败: {str(e)}",
                 "data": []
             }
-    
-    def _handle_help(self) -> dict:
-        """处理 \\help 命令"""
-        help_text = """
-MiniSQL Shell 命令帮助:
-
-📋 会话管理:
-\\session list                    - 列出所有会话
-\\session new                     - 创建新会话
-\\session use <id>                - 选择指定会话 (Web环境受限)
-\\session info                    - 显示当前会话信息
-
-💡 Web环境提示:
-- 每个浏览器标签页有独立的数据库会话
-- 要使用不同会话，请打开新标签页
-- 会话切换在Web环境中是受限的
-
-📊 数据库管理:
-\\tables                          - 列出所有表
-\\views                           - 列出所有视图
-\\indexes                         - 列出所有索引
-\\stats                           - 显示数据库统计信息
-
-👥 用户管理:
-\\users                           - 列出所有用户
-\\whoami                          - 显示当前用户
-
-❓ 帮助:
-\\help 或 \\?                     - 显示此帮助信息
-
-💡 提示: 所有标准SQL语句也支持，如 SELECT, INSERT, UPDATE, DELETE 等
-        """
-        return {
-            "success": True,
-            "message": "Shell命令帮助",
-            "data": [{"help": help_text.strip()}],
-            "type": "SHELL_COMMAND"
-        }
 
     def _format_select_for_web(self, data: list) -> dict:
         """将SELECT结果格式化为适合前端展示的格式"""
