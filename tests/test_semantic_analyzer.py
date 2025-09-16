@@ -148,7 +148,7 @@ def test_error_select_non_existent_table():
             assert_test("测试错误：SELECT不存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试错误：SELECT不存在的表", True)
-            assert_test("测试错误：SELECT不存在的表", '表 non_existent_table 不存在' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试错误：SELECT不存在的表", e.error_list[0] == 'SemanticError' and '表 non_existent_table 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -204,7 +204,7 @@ def test_error_select_non_existent_column():
             assert_test("测试错误：SELECT不存在的列", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试错误：SELECT不存在的列", True)
-            assert_test("测试错误：SELECT不存在的列", '列 email 不存在' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试错误：SELECT不存在的列", e.error_list[0] == 'SemanticError' and '列 email 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -260,7 +260,7 @@ def test_error_ambiguous_column_in_join():
             assert_test("测试错误：JOIN中存在不明确的列", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试错误：JOIN中存在不明确的列", True)
-            assert_test("测试错误：JOIN中存在不明确的列", '列 id 不明确' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试错误：JOIN中存在不明确的列", e.error_list[0] == 'SemanticError' and '列 id 不明确' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -316,7 +316,7 @@ def test_insert_column_count_mismatch():
             assert_test("测试INSERT列数/值数不匹配", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试INSERT列数/值数不匹配", True)
-            assert_test("测试INSERT列数/值数不匹配", '列 non_existent_col 不存在于表 users' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试INSERT列数/值数不匹配", e.error_list[0] == 'SemanticError' and '列 non_existent_col 不存在于表 users' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -372,7 +372,7 @@ def test_error_non_agg_in_group_by_select():
             assert_test("测试错误：非聚合列未包含在GROUP BY中", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试错误：非聚合列未包含在GROUP BY中", True)
-            assert_test("测试错误：非聚合列未包含在GROUP BY中", '非聚合列必须包含在分组键中' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试错误：非聚合列未包含在GROUP BY中", e.error_list[0] == 'SemanticError' and '非聚合列必须包含在分组键中' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -428,7 +428,7 @@ def test_create_existing_table_error():
             assert_test("测试错误：创建已存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试错误：创建已存在的表", True)
-            assert_test("测试错误：创建已存在的表", '表 users 已存在' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试错误：创建已存在的表", e.error_list[0] == 'SemanticError' and '表 users 已存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -484,7 +484,172 @@ def test_drop_non_existing_table_error():
             assert_test("测试错误：删除不存在的表", False, "预期抛出SemanticError")
         except SemanticError as e:
             assert_test("测试错误：删除不存在的表", True)
-            assert_test("测试错误：删除不存在的表", '表 non_existent_table 不存在' in str(e.error_list), f"错误信息不匹配: {e.error_list}")
+            assert_test("测试错误：删除不存在的表", e.error_list[0] == 'SemanticError' and '表 non_existent_table 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
+    finally:
+        tmpfile.close()
+        os.remove(tmpfile.name)
+
+def test_semantic_multi_join():
+    """测试三表JOIN"""
+    from storage.page_manager import PageManager
+    from storage.buffer_manager import BufferManager
+    from catalog import SystemCatalog
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        page_manager = PageManager(tmpfile.name)
+        buffer_manager = BufferManager(page_manager)
+        catalog = SystemCatalog(buffer_manager)
+        catalog.create_table("a", [ColumnDefinition("id", DataType.INTEGER, primary_key=True)])
+        catalog.create_table("b", [ColumnDefinition("id", DataType.INTEGER, primary_key=True)])
+        catalog.create_table("c", [ColumnDefinition("id", DataType.INTEGER, primary_key=True)])
+        analyzer = SemanticAnalyzer(catalog)
+        sql = "SELECT a.id, b.id, c.id FROM a JOIN b ON a.id=b.id JOIN c ON b.id=c.id;"
+        try:
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+            analyzer.analyze(ast)
+            assert_test("测试三表JOIN", True)
+        except Exception as e:
+            assert_test("测试三表JOIN", False, e)
+    finally:
+        tmpfile.close()
+        os.remove(tmpfile.name)
+
+# ========== UPDATE/DELETE/ALTER/TRUNCATE/VIEW/INDEX/USER/GRANT/REVOKE/触发器 =============
+def test_semantic_update_type_error():
+    """UPDATE类型不兼容"""
+    from storage.page_manager import PageManager
+    from storage.buffer_manager import BufferManager
+    from catalog import SystemCatalog
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        page_manager = PageManager(tmpfile.name)
+        buffer_manager = BufferManager(page_manager)
+        catalog = SystemCatalog(buffer_manager)
+        catalog.create_table("t", [ColumnDefinition("id", DataType.INTEGER, primary_key=True), ColumnDefinition("name", DataType.VARCHAR, max_length=10)])
+        analyzer = SemanticAnalyzer(catalog)
+        sql = "UPDATE t SET id = 'abc';"
+        try:
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+            analyzer.analyze(ast)
+            assert_test("测试UPDATE类型不兼容", False, "预期抛出SemanticError")
+        except SemanticError as e:
+            assert_test("测试UPDATE类型不兼容", True)
+            assert_test("测试UPDATE类型不兼容", e.error_list[0] == 'SemanticError' and '期望INTEGER类型' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
+    finally:
+        tmpfile.close()
+        os.remove(tmpfile.name)
+
+def test_semantic_delete_nonexistent():
+    """DELETE不存在的表"""
+    from storage.page_manager import PageManager
+    from storage.buffer_manager import BufferManager
+    from catalog import SystemCatalog
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        page_manager = PageManager(tmpfile.name)
+        buffer_manager = BufferManager(page_manager)
+        catalog = SystemCatalog(buffer_manager)
+        analyzer = SemanticAnalyzer(catalog)
+        sql = "DELETE FROM notab;"
+        try:
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+            analyzer.analyze(ast)
+            assert_test("测试DELETE不存在的表", False, "预期抛出SemanticError")
+        except SemanticError as e:
+            assert_test("测试DELETE不存在的表", True)
+            assert_test("测试DELETE不存在的表", e.error_list[0] == 'SemanticError' and '表 notab 不存在' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
+    finally:
+        tmpfile.close()
+        os.remove(tmpfile.name)
+
+
+# ========== SET/SHOW/系统参数 =============
+def test_semantic_set_invalid_param():
+    """SET非法参数"""
+    from storage.page_manager import PageManager
+    from storage.buffer_manager import BufferManager
+    from catalog import SystemCatalog
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        page_manager = PageManager(tmpfile.name)
+        buffer_manager = BufferManager(page_manager)
+        catalog = SystemCatalog(buffer_manager)
+        analyzer = SemanticAnalyzer(catalog)
+        sql = "SET FOOBAR=1;"
+        try:
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+            analyzer.analyze(ast)
+            assert_test("测试SET非法参数", False, "预期抛出SyntaxError或SemanticError")
+        except (SyntaxError, SemanticError) as e:
+            assert_test("测试SET非法参数", True)
+            assert_test("测试SET非法参数", e.error_list[0] == 'SemanticError' and '非法参数' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
+    finally:
+        tmpfile.close()
+        os.remove(tmpfile.name)
+
+# ========== 游标相关 =============
+def test_semantic_fetch_nonexistent_cursor():
+    """FETCH不存在的游标"""
+    from storage.page_manager import PageManager
+    from storage.buffer_manager import BufferManager
+    from catalog import SystemCatalog
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        page_manager = PageManager(tmpfile.name)
+        buffer_manager = BufferManager(page_manager)
+        catalog = SystemCatalog(buffer_manager)
+        analyzer = SemanticAnalyzer(catalog)
+        sql = "FETCH 10 FROM notcursor;"
+        try:
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+            analyzer.analyze(ast)
+            assert_test("测试FETCH不存在的游标", False, "预期抛出SemanticError")
+        except SemanticError as e:
+            assert_test("测试FETCH不存在的游标", True)
+            assert_test("测试FETCH不存在的游标", e.error_list[0] == 'SemanticError' and '游标' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
+    finally:
+        tmpfile.close()
+        os.remove(tmpfile.name)
+
+# ========== 边界和异常 =============
+def test_semantic_insert_null_notnull():
+    """插入NULL到NOT NULL列"""
+    from storage.page_manager import PageManager
+    from storage.buffer_manager import BufferManager
+    from catalog import SystemCatalog
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        page_manager = PageManager(tmpfile.name)
+        buffer_manager = BufferManager(page_manager)
+        catalog = SystemCatalog(buffer_manager)
+        catalog.create_table("t", [ColumnDefinition("id", DataType.INTEGER, primary_key=True), ColumnDefinition("name", DataType.VARCHAR, max_length=10, nullable=False)])
+        analyzer = SemanticAnalyzer(catalog)
+        sql = "INSERT INTO t (id, name) VALUES (1, NULL);"
+        try:
+            lexer = SQLLexer(sql)
+            tokens = lexer.tokenize()
+            parser = SQLParser(tokens)
+            ast = parser.parse()
+            analyzer.analyze(ast)
+            assert_test("测试插入NULL到NOT NULL列", False, "预期抛出SemanticError")
+        except SemanticError as e:
+            assert_test("测试插入NULL到NOT NULL列", True)
+            assert_test("测试插入NULL到NOT NULL列", e.error_list[0] == 'SemanticError' and '不允许为NULL' in e.error_list[2], f"错误信息不匹配: {e.error_list}")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -499,6 +664,15 @@ def main():
     test_error_non_agg_in_group_by_select()
     test_create_existing_table_error()
     test_drop_non_existing_table_error()
+    # test_semantic_nested_select() # 当前不支持FROM子查询别名，相关测试已注释
+    test_semantic_multi_join()
+    test_semantic_update_type_error()
+    test_semantic_delete_nonexistent()
+    test_semantic_grant_nonexistent_user()
+    test_semantic_commit_without_txn()
+    test_semantic_set_invalid_param()
+    test_semantic_fetch_nonexistent_cursor()
+    test_semantic_insert_null_notnull()
     print_test_summary()
 
 if __name__ == "__main__":

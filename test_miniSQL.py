@@ -81,28 +81,28 @@ class MiniSQLTester:
         print("\n=== 测试用户管理功能 ===")
 
         # 先清理可能存在的测试用户
-        self.execute_sql("DROP USER testuser")
-        self.execute_sql("DROP USER alice")
+        self.execute_sql("DROP USER testuser;")
+        self.execute_sql("DROP USER alice;")
 
         # 创建用户
-        result = self.execute_sql("CREATE USER testuser IDENTIFIED BY 'password123'")
+        result = self.execute_sql("CREATE USER testuser IDENTIFIED BY 'password123';")
         self.assert_test("创建用户", result.get("success"), result.get("message", ""))
 
         if result.get("success"):
             # 创建重复用户（应该失败）
-            result = self.execute_sql("CREATE USER testuser IDENTIFIED BY 'password456'")
+            result = self.execute_sql("CREATE USER testuser IDENTIFIED BY 'password456';")
             self.assert_test("创建重复用户应该失败", not result.get("success"))
 
             # 删除用户
-            result = self.execute_sql("DROP USER testuser")
+            result = self.execute_sql("DROP USER testuser;")
             self.assert_test("删除用户", result.get("success"))
 
         # 创建另一个用户
-        result = self.execute_sql("CREATE USER alice IDENTIFIED BY 'alice123'")
+        result = self.execute_sql("CREATE USER alice IDENTIFIED BY 'alice123';")
         self.assert_test("创建用户alice", result.get("success"))
 
         # 删除不存在的用户（应该失败）
-        result = self.execute_sql("DROP USER nonexistent")
+        result = self.execute_sql("DROP USER nonexistent;")
         self.assert_test("删除不存在用户应该失败", not result.get("success"))
 
     def test_table_operations(self):
@@ -118,7 +118,7 @@ class MiniSQLTester:
             email VARCHAR(100) UNIQUE,
             salary FLOAT DEFAULT 5000.0,
             is_active BOOLEAN DEFAULT TRUE
-        )
+        );
         """
         result = self.execute_sql(create_sql)
         self.assert_test(
@@ -134,7 +134,7 @@ class MiniSQLTester:
             name VARCHAR(100) NOT NULL,
             price FLOAT,
             category VARCHAR(50)
-        )
+        );
         """
         result = self.execute_sql(create_products_sql)
         self.assert_test(
@@ -151,7 +151,7 @@ class MiniSQLTester:
             product_id INTEGER,
             quantity INTEGER CHECK (quantity > 0),
             order_date DATE
-        )
+        );
         """
         result = self.execute_sql(create_orders_sql)
         self.assert_test(
@@ -165,15 +165,15 @@ class MiniSQLTester:
         print("\n=== 测试数据插入功能 ===")
 
         # 先清理可能存在的数据
-        self.execute_sql("DELETE FROM users")
+        self.execute_sql("DELETE FROM users;")
 
         # 插入用户数据
         insert_users = [
-            "INSERT INTO users (id, name, age, email) VALUES (1, 'John Doe', 25, 'john@example.com')",
-            "INSERT INTO users (id, name, age, email, salary) VALUES (2, 'Jane Smith', 30, 'jane@example.com', 6000.0)",
-            "INSERT INTO users (id, name, age, email) VALUES (3, 'Bob Wilson', 35, 'bob@example.com')",
-            "INSERT INTO users (id, name, age, email) VALUES (4, 'Alice Brown', 28, 'alice@example.com')",
-            "INSERT INTO users (id, name, age, email, is_active) VALUES (5, 'Charlie Davis', 22, 'charlie@example.com', FALSE)",
+            "INSERT INTO users (id, name, age, email) VALUES (1, 'John Doe', 25, 'john@example.com');",
+            "INSERT INTO users (id, name, age, email, salary) VALUES (2, 'Jane Smith', 30, 'jane@example.com', 6000.0);",
+            "INSERT INTO users (id, name, age, email) VALUES (3, 'Bob Wilson', 35, 'bob@example.com');",
+            "INSERT INTO users (id, name, age, email) VALUES (4, 'Alice Brown', 28, 'alice@example.com');",
+            "INSERT INTO users (id, name, age, email, is_active) VALUES (5, 'Charlie Davis', 22, 'charlie@example.com', FALSE);",
         ]
 
         success_count = 0
@@ -190,10 +190,10 @@ class MiniSQLTester:
 
         # 插入产品数据
         insert_products = [
-            "INSERT INTO products VALUES (1, 'Laptop', 1200.0, 'Electronics')",
-            "INSERT INTO products VALUES (2, 'Mouse', 25.0, 'Electronics')",
-            "INSERT INTO products VALUES (3, 'Desk', 300.0, 'Furniture')",
-            "INSERT INTO products VALUES (4, 'Chair', 150.0, 'Furniture')",
+            "INSERT INTO products VALUES (1, 'Laptop', 1200.0, 'Electronics');",
+            "INSERT INTO products VALUES (2, 'Mouse', 25.0, 'Electronics');",
+            "INSERT INTO products VALUES (3, 'Desk', 300.0, 'Furniture');",
+            "INSERT INTO products VALUES (4, 'Chair', 150.0, 'Furniture');",
         ]
 
         for i, sql in enumerate(insert_products):
@@ -208,18 +208,18 @@ class MiniSQLTester:
         if success_count > 0:
             # 主键冲突
             result = self.execute_sql(
-                "INSERT INTO users VALUES (1, 'Duplicate', 40, 'dup@example.com', 5000.0, TRUE)"
+                "INSERT INTO users VALUES (1, 'Duplicate', 40, 'dup@example.com', 5000.0, TRUE);"
             )
             self.assert_test("主键冲突应该失败", not result.get("success"))
 
             # 唯一约束冲突
             result = self.execute_sql(
-                "INSERT INTO users VALUES (6, 'Test', 40, 'john@example.com', 5000.0, TRUE)"
+                "INSERT INTO users VALUES (6, 'Test', 40, 'john@example.com', 5000.0, TRUE);"
             )
             self.assert_test("唯一约束冲突应该失败", not result.get("success"))
 
         # NOT NULL约束违反
-        result = self.execute_sql("INSERT INTO users (id, age) VALUES (6, 25)")
+        result = self.execute_sql("INSERT INTO users (id, age) VALUES (6, 25);")
         self.assert_test("NOT NULL约束违反应该失败", not result.get("success"))
 
     def test_query_operations(self):
@@ -227,13 +227,13 @@ class MiniSQLTester:
         print("\n=== 测试查询操作 ===")
 
         # 基本SELECT
-        result = self.execute_sql("SELECT * FROM users")
+        result = self.execute_sql("SELECT * FROM users;")
         self.assert_test(
             "SELECT * 查询", result.get("success"), result.get("message", result.get("error", ""))
         )
 
         # 指定列查询
-        result = self.execute_sql("SELECT name, age FROM users")
+        result = self.execute_sql("SELECT name, age FROM users;")
         self.assert_test(
             "指定列查询",
             result.get("success"),
@@ -241,7 +241,7 @@ class MiniSQLTester:
         )
 
         # WHERE条件查询
-        result = self.execute_sql("SELECT * FROM users WHERE age > 25")
+        result = self.execute_sql("SELECT * FROM users WHERE age > 25;")
         self.assert_test(
             "WHERE条件查询",
             result.get("success"),
@@ -250,7 +250,7 @@ class MiniSQLTester:
 
         # 复合WHERE条件
         result = self.execute_sql(
-            "SELECT * FROM users WHERE age > 25 AND is_active = TRUE"
+            "SELECT * FROM users WHERE age > 25 AND is_active = TRUE;"
         )
         self.assert_test(
             "复合WHERE条件",
@@ -261,7 +261,7 @@ class MiniSQLTester:
         # 不同操作符测试
         operators = ["=", "!=", "<", "<=", ">", ">="]
         for op in operators:
-            result = self.execute_sql(f"SELECT * FROM users WHERE age {op} 30")
+            result = self.execute_sql(f"SELECT * FROM users WHERE age {op} 30;")
             self.assert_test(
                 f"操作符{op}测试",
                 result.get("success"),
@@ -273,7 +273,7 @@ class MiniSQLTester:
         print("\n=== 测试聚合函数 ===")
 
         # 先确保有数据
-        result = self.execute_sql("SELECT COUNT(*) FROM users")
+        result = self.execute_sql("SELECT COUNT(*) FROM users;")
         user_count = self.safe_get_count(result)
 
         if user_count is None or user_count == 0:
@@ -281,13 +281,13 @@ class MiniSQLTester:
             return
 
         # COUNT测试
-        result = self.execute_sql("SELECT COUNT(*) FROM users")
+        result = self.execute_sql("SELECT COUNT(*) FROM users;")
         actual_count = self.safe_get_count(result)
         self.assert_test("COUNT(*) 测试",
                          result.get("success") and actual_count is not None,
                          f"实际返回: {actual_count}")
 
-        result = self.execute_sql("SELECT COUNT(age) FROM users")
+        result = self.execute_sql("SELECT COUNT(age) FROM users;")
         self.assert_test(
             "COUNT(column) 测试",
             result.get("success"),
@@ -298,7 +298,7 @@ class MiniSQLTester:
         aggregate_functions = ["SUM(age)", "AVG(age)", "MIN(age)", "MAX(age)"]
 
         for func in aggregate_functions:
-            result = self.execute_sql(f"SELECT {func} FROM users")
+            result = self.execute_sql(f"SELECT {func} FROM users;")
             self.assert_test(f"{func}测试",
                              result.get("success"),
                              result.get("message", result.get("error", "")))
@@ -309,7 +309,7 @@ class MiniSQLTester:
 
         # UPDATE测试
         result = self.execute_sql(
-            "UPDATE users SET salary = 7000.0 WHERE name = 'John Doe'"
+            "UPDATE users SET salary = 7000.0 WHERE name = 'John Doe';"
         )
         self.assert_test(
             "UPDATE操作",
@@ -318,7 +318,7 @@ class MiniSQLTester:
         )
 
         # 验证更新结果
-        result = self.execute_sql("SELECT salary FROM users WHERE name = 'John Doe'")
+        result = self.execute_sql("SELECT salary FROM users WHERE name = 'John Doe';")
         success = (
                 result.get("success")
                 and len(result.get("data", [])) > 0
@@ -329,7 +329,7 @@ class MiniSQLTester:
         )
 
         # DELETE测试
-        result = self.execute_sql("DELETE FROM users WHERE name = 'Charlie Davis'")
+        result = self.execute_sql("DELETE FROM users WHERE name = 'Charlie Davis';")
         self.assert_test(
             "DELETE操作",
             result.get("success"),
@@ -337,7 +337,7 @@ class MiniSQLTester:
         )
 
         # 验证删除结果
-        result = self.execute_sql("SELECT COUNT(*) FROM users")
+        result = self.execute_sql("SELECT COUNT(*) FROM users;")
         actual_count = self.safe_get_count(result)
         expected_count = 4  # 原来5个，删除1个
         self.assert_test(
@@ -351,7 +351,7 @@ class MiniSQLTester:
         print("\n=== 测试索引操作 ===")
 
         # 创建索引
-        result = self.execute_sql("CREATE INDEX idx_user_email ON users (email)")
+        result = self.execute_sql("CREATE INDEX idx_user_email ON users (email);")
         self.assert_test(
             "创建普通索引",
             result.get("success"),
@@ -359,7 +359,7 @@ class MiniSQLTester:
         )
 
         # 创建唯一索引
-        result = self.execute_sql("CREATE UNIQUE INDEX idx_user_id ON users (id)")
+        result = self.execute_sql("CREATE UNIQUE INDEX idx_user_id ON users (id);")
         self.assert_test(
             "创建唯一索引",
             result.get("success"),
@@ -367,12 +367,12 @@ class MiniSQLTester:
         )
 
         # 创建重复索引（应该失败）
-        result = self.execute_sql("CREATE INDEX idx_user_email ON users (email)")
+        result = self.execute_sql("CREATE INDEX idx_user_email ON users (email);")
         self.assert_test("创建重复索引应该失败", not result.get("success"))
 
         # 使用索引查询
         result = self.execute_sql(
-            "SELECT * FROM users WHERE email = 'john@example.com'"
+            "SELECT * FROM users WHERE email = 'john@example.com';"
         )
         self.assert_test(
             "索引查询",
@@ -381,7 +381,7 @@ class MiniSQLTester:
         )
 
         # 删除索引
-        result = self.execute_sql("DROP INDEX idx_user_email")
+        result = self.execute_sql("DROP INDEX idx_user_email;")
         self.assert_test(
             "删除索引",
             result.get("success"),
@@ -389,7 +389,7 @@ class MiniSQLTester:
         )
 
         # 删除不存在的索引（应该失败）
-        result = self.execute_sql("DROP INDEX nonexistent_index")
+        result = self.execute_sql("DROP INDEX nonexistent_index;")
         self.assert_test("删除不存在索引应该失败", not result.get("success"))
 
     def test_view_operations(self):
@@ -398,7 +398,7 @@ class MiniSQLTester:
 
         # 创建简单视图
         create_view_sql = (
-            "CREATE VIEW adult_users AS SELECT * FROM users WHERE age >= 25"
+            "CREATE VIEW adult_users AS SELECT * FROM users WHERE age >= 25;"
         )
         result = self.execute_sql(create_view_sql)
         self.assert_test(
@@ -408,7 +408,7 @@ class MiniSQLTester:
         )
 
         # 查询视图
-        result = self.execute_sql("SELECT * FROM adult_users")
+        result = self.execute_sql("SELECT * FROM adult_users;")
         self.assert_test(
             "查询视图",
             result.get("success"),
@@ -416,7 +416,7 @@ class MiniSQLTester:
         )
 
         # 在视图上使用WHERE
-        result = self.execute_sql("SELECT * FROM adult_users WHERE age > 30")
+        result = self.execute_sql("SELECT * FROM adult_users WHERE age > 30;")
         self.assert_test(
             "视图WHERE查询",
             result.get("success"),
@@ -424,7 +424,7 @@ class MiniSQLTester:
         )
 
         # 创建复杂视图
-        create_complex_view_sql = "CREATE VIEW user_summary AS SELECT name, age, salary FROM users WHERE is_active = TRUE"
+        create_complex_view_sql = "CREATE VIEW user_summary AS SELECT name, age, salary FROM users WHERE is_active = TRUE;"
         result = self.execute_sql(create_complex_view_sql)
         self.assert_test(
             "创建复杂视图",
@@ -433,7 +433,7 @@ class MiniSQLTester:
         )
 
         # 删除视图
-        result = self.execute_sql("DROP VIEW adult_users")
+        result = self.execute_sql("DROP VIEW adult_users;")
         self.assert_test(
             "删除视图",
             result.get("success"),
@@ -445,21 +445,21 @@ class MiniSQLTester:
         print("\n=== 测试权限管理 ===")
 
         # 授权
-        result = self.execute_sql("GRANT SELECT ON users TO alice")
+        result = self.execute_sql("GRANT SELECT ON users TO alice;")
         self.assert_test(
             "授予SELECT权限",
             result.get("success"),
             result.get("message", result.get("error", "")),
         )
 
-        result = self.execute_sql("GRANT INSERT ON users TO alice")
+        result = self.execute_sql("GRANT INSERT ON users TO alice;")
         self.assert_test(
             "授予INSERT权限",
             result.get("success"),
             result.get("message", result.get("error", "")),
         )
 
-        result = self.execute_sql("GRANT ALL ON products TO alice")
+        result = self.execute_sql("GRANT ALL ON products TO alice;")
         self.assert_test(
             "授予ALL权限",
             result.get("success"),
@@ -467,7 +467,7 @@ class MiniSQLTester:
         )
 
         # 撤权
-        result = self.execute_sql("REVOKE INSERT ON users FROM alice")
+        result = self.execute_sql("REVOKE INSERT ON users FROM alice;")
         self.assert_test(
             "撤销INSERT权限",
             result.get("success"),
@@ -475,7 +475,7 @@ class MiniSQLTester:
         )
 
         # 给不存在用户授权（应该失败）
-        result = self.execute_sql("GRANT SELECT ON users TO nonexistent")
+        result = self.execute_sql("GRANT SELECT ON users TO nonexistent;")
         self.assert_test("给不存在用户授权应该失败", not result.get("success"))
 
     def test_table_management(self):
@@ -484,7 +484,7 @@ class MiniSQLTester:
 
         # 创建测试表
         result = self.execute_sql(
-            "CREATE TABLE temp_table (id INTEGER, name VARCHAR(50))"
+            "CREATE TABLE temp_table (id INTEGER, name VARCHAR(50));"
         )
         self.assert_test(
             "创建临时表",
@@ -493,13 +493,13 @@ class MiniSQLTester:
         )
 
         # 插入数据
-        result = self.execute_sql("INSERT INTO temp_table VALUES (1, 'Test1')")
+        result = self.execute_sql("INSERT INTO temp_table VALUES (1, 'Test1');")
         self.assert_test(
             "插入测试数据1",
             result.get("success"),
             result.get("message", result.get("error", "")),
         )
-        result = self.execute_sql("INSERT INTO temp_table VALUES (2, 'Test2')")
+        result = self.execute_sql("INSERT INTO temp_table VALUES (2, 'Test2');")
         self.assert_test(
             "插入测试数据2",
             result.get("success"),
@@ -507,7 +507,7 @@ class MiniSQLTester:
         )
 
         # TRUNCATE测试
-        result = self.execute_sql("TRUNCATE TABLE temp_table")
+        result = self.execute_sql("TRUNCATE TABLE temp_table;")
         self.assert_test(
             "TRUNCATE表",
             result.get("success"),
@@ -515,7 +515,7 @@ class MiniSQLTester:
         )
 
         # 验证TRUNCATE结果
-        result = self.execute_sql("SELECT COUNT(*) FROM temp_table")
+        result = self.execute_sql("SELECT COUNT(*) FROM temp_table;")
         actual_count = self.safe_get_count(result)
         self.assert_test(
             "验证TRUNCATE结果",
@@ -524,7 +524,7 @@ class MiniSQLTester:
         )
 
         # DROP表测试
-        result = self.execute_sql("DROP TABLE temp_table")
+        result = self.execute_sql("DROP TABLE temp_table;")
         self.assert_test(
             "DROP表",
             result.get("success"),
@@ -532,7 +532,7 @@ class MiniSQLTester:
         )
 
         # 查询已删除的表（应该失败）
-        result = self.execute_sql("SELECT * FROM temp_table")
+        result = self.execute_sql("SELECT * FROM temp_table;")
         self.assert_test("查询已删除表应该失败", not result.get("success"))
 
     def test_constraint_validation(self):
@@ -547,7 +547,7 @@ class MiniSQLTester:
             score FLOAT DEFAULT 0.0,
             name VARCHAR(50) NOT NULL,
             email VARCHAR(100) UNIQUE
-        )
+        );
         """
         result = self.execute_sql(constraint_table_sql)
         self.assert_test(
@@ -558,7 +558,7 @@ class MiniSQLTester:
 
         # 正常插入
         result = self.execute_sql(
-            "INSERT INTO test_constraints (id, age, name, email) VALUES (1, 25, 'Test User', 'test@example.com')"
+            "INSERT INTO test_constraints (id, age, name, email) VALUES (1, 25, 'Test User', 'test@example.com');"
         )
         self.assert_test(
             "正常插入数据",
@@ -568,7 +568,7 @@ class MiniSQLTester:
 
         # DEFAULT值测试
         result = self.execute_sql(
-            "INSERT INTO test_constraints (id, age, name, email) VALUES (2, 30, 'User2', 'user2@example.com')"
+            "INSERT INTO test_constraints (id, age, name, email) VALUES (2, 30, 'User2', 'user2@example.com');"
         )
         self.assert_test(
             "DEFAULT值测试",
@@ -578,7 +578,7 @@ class MiniSQLTester:
 
         # CHECK约束测试（应该失败）
         result = self.execute_sql(
-            "INSERT INTO test_constraints VALUES (3, -5, 0.0, 'Invalid', 'invalid@example.com')"
+            "INSERT INTO test_constraints VALUES (3, -5, 0.0, 'Invalid', 'invalid@example.com');"
         )
         self.assert_test("CHECK约束违反应该失败", not result.get("success"))
 
@@ -596,7 +596,7 @@ class MiniSQLTester:
             char_col CHAR(10),
             bigint_col BIGINT,
             text_col TEXT
-        )
+        );
         """
         result = self.execute_sql(types_sql)
         self.assert_test(
@@ -609,7 +609,7 @@ class MiniSQLTester:
         insert_types_sql = """
         INSERT INTO data_types_test VALUES (
             123, 'Hello World', 3.14, TRUE, 'ABCDE', 9999999999, 'This is a long text'
-        )
+        );
         """
         result = self.execute_sql(insert_types_sql)
         self.assert_test(
@@ -632,7 +632,7 @@ class MiniSQLTester:
 
         # 空字符串
         result = self.execute_sql(
-            "INSERT INTO users (id, name, age, email) VALUES (10, '', 25, 'empty@example.com')"
+            "INSERT INTO users (id, name, age, email) VALUES (10, '', 25, 'empty@example.com');"
         )
         self.assert_test(
             "插入空字符串",
@@ -642,7 +642,7 @@ class MiniSQLTester:
 
         # 特殊字符
         result = self.execute_sql(
-            "INSERT INTO users (id, name, age, email) VALUES (11, 'User with spaces', 25, 'special@example.com')"
+            "INSERT INTO users (id, name, age, email) VALUES (11, 'User with spaces', 25, 'special@example.com');"
         )
         self.assert_test(
             "插入特殊字符",
@@ -651,11 +651,11 @@ class MiniSQLTester:
         )
 
         # 查询不存在的表
-        result = self.execute_sql("SELECT * FROM nonexistent_table")
+        result = self.execute_sql("SELECT * FROM nonexistent_table;")
         self.assert_test("查询不存在表应该失败", not result.get("success"))
 
         # 查询不存在的列
-        result = self.execute_sql("SELECT nonexistent_column FROM users")
+        result = self.execute_sql("SELECT nonexistent_column FROM users;")
         self.assert_test("查询不存在列应该失败", not result.get("success"))
 
     def run_all_tests(self):

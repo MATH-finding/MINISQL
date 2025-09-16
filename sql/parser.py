@@ -98,6 +98,13 @@ class SQLParser:
         elif self.current_token.type == TokenType.SHOW:
             # SHOW相关配置
             result = self._parse_show()
+            # 游标
+        elif self.current_token.type == TokenType.OPEN:
+            result = self._parse_open_cursor()
+        elif self.current_token.type == TokenType.FETCH:
+            result = self._parse_fetch_cursor()
+        elif self.current_token.type == TokenType.CLOSE:
+            result = self._parse_close_cursor()
         else:
             # 兜底分支：遇到未知或不支持的语句类型，直接报错
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
@@ -712,6 +719,8 @@ class SQLParser:
                 parts.append(token.value)
 
         view_definition = " ".join(parts).strip()
+        if not view_definition.endswith(';'):
+            view_definition += ';'
         return CreateViewStatement(view_name, view_definition, if_not_exists=if_not_exists)
 
     def _parse_drop_view(self):
@@ -958,7 +967,8 @@ class SQLParser:
             raise SyntaxError("触发器体不能为空")
 
         statement = " ".join(statement_tokens)
-
+        if not statement.endswith(';'):
+            statement += ';'
         return CreateTriggerStatement(trigger_name, timing, event, table_name, statement)
 
     def _parse_drop_trigger(self) -> DropTriggerStatement:
@@ -1009,3 +1019,25 @@ class SQLParser:
             return ShowStatement("ISOLATION_LEVEL")
         else:
             raise SyntaxError("仅支持: SHOW AUTOCOMMIT 或 SHOW ISOLATION LEVEL")
+
+    def _parse_open_cursor(self):
+        self._expect(TokenType.OPEN)
+        self._expect(TokenType.CURSOR)
+        cursor_name = self._expect(TokenType.IDENTIFIER).value
+        self._expect(TokenType.FOR)
+        # 允许FOR后嵌套SELECT语句
+        select_stmt = self._parse_select()
+        return OpenCursorStatement(cursor_name, select_stmt)
+
+    def _parse_fetch_cursor(self):
+        self._expect(TokenType.FETCH)
+        count = int(self._expect(TokenType.NUMBER).value)
+        self._expect(TokenType.FROM)
+        cursor_name = self._expect(TokenType.IDENTIFIER).value
+        return FetchCursorStatement(count, cursor_name)
+
+    def _parse_close_cursor(self):
+        self._expect(TokenType.CLOSE)
+        self._expect(TokenType.CURSOR)
+        cursor_name = self._expect(TokenType.IDENTIFIER).value
+        return CloseCursorStatement(cursor_name)

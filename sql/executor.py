@@ -310,6 +310,8 @@ class SQLExecutor:
                 ):
                     # print(f"[EXECUTOR DEBUG] SELECT on view detected: view={ast.from_table}")
                     view_sql = self.catalog.get_view_definition(ast.from_table.lower())
+                    if not view_sql.strip().endswith(';'):
+                        view_sql = view_sql.strip() + ';'
                     # print(f"[EXECUTOR DEBUG] view SQL: {view_sql}")
                     from sql.lexer import SQLLexer
                     from sql.parser import SQLParser

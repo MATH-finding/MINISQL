@@ -414,6 +414,10 @@ class SQLShell:
             if len(parts) >= 3 and parts[1] == "open":
                 sql = command.partition("open")[2].strip()
                 try:
+                    # 确保SQL以SELECT开头
+                    if not sql.strip().upper().startswith("SELECT"):
+                        print("[游标] 只支持SELECT语句")
+                        return
                     cursor_id = self.database.sql_executor.open_cursor(sql)
                     print(f"[游标] 已打开，ID={cursor_id}")
                 except Exception as e:

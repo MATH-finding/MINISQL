@@ -2912,6 +2912,9 @@ class DatabaseWebAPI:
         def open_cursor():
             sql = request.json.get('sql')
             try:
+                # 只允许SELECT语句
+                if not sql or not sql.strip().upper().startswith('SELECT'):
+                    return jsonify({'success': False, 'error': '只支持SELECT语句'}), 400
                 cursor_id = self.executor.open_cursor(sql)
                 return jsonify({'success': True, 'cursor_id': cursor_id})
             except Exception as e:
@@ -2922,7 +2925,9 @@ class DatabaseWebAPI:
             cursor_id = request.json.get('cursor_id')
             n = request.json.get('n', 10)
             try:
-                res = self.executor.fetch_cursor(int(cursor_id), int(n))
+                cursor_id = int(cursor_id)
+                n = int(n)
+                res = self.executor.fetch_cursor(cursor_id, n)
                 return jsonify({'success': True, 'rows': res['rows'], 'done': res['done']})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
@@ -2931,7 +2936,8 @@ class DatabaseWebAPI:
         def close_cursor():
             cursor_id = request.json.get('cursor_id')
             try:
-                ok = self.executor.close_cursor(int(cursor_id))
+                cursor_id = int(cursor_id)
+                ok = self.executor.close_cursor(cursor_id)
                 return jsonify({'success': ok})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})

@@ -32,14 +32,14 @@ def test_cursor_web_api():
         id INTEGER PRIMARY KEY,
         name VARCHAR(50),
         age INTEGER
-    )
+    );
     """
     
     session.post(f'{base_url}/api/sql/execute', json={'sql': create_table_sql})
     
     # 插入测试数据
     for i in range(20):
-        insert_sql = f"INSERT INTO cursor_test VALUES ({i}, 'User{i}', {20+i})"
+        insert_sql = f"INSERT INTO cursor_test VALUES ({i}, 'User{i}', {20+i});"
         session.post(f'{base_url}/api/sql/execute', json={'sql': insert_sql})
     
     print("测试数据准备完成")
@@ -47,7 +47,7 @@ def test_cursor_web_api():
     # 测试游标操作
     print("\n3. 测试打开游标...")
     open_response = session.post(f'{base_url}/api/cursors/open', json={
-        'sql': 'SELECT * FROM cursor_test ORDER BY id'
+        'sql': 'SELECT * FROM cursor_test ORDER BY id;'
     })
     
     if open_response.status_code != 200:
@@ -110,7 +110,7 @@ def test_cursor_web_api():
     
     # 清理测试数据
     print("\n6. 清理测试数据...")
-    session.post(f'{base_url}/api/sql/execute', json={'sql': 'DROP TABLE cursor_test'})
+    session.post(f'{base_url}/api/sql/execute', json={'sql': 'DROP TABLE cursor_test;'})
     print("测试完成")
     
     return True

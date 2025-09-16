@@ -459,3 +459,24 @@ class ShowStatement(Statement):
 
     def __repr__(self):
         return f"SHOW {self.show_type}"
+
+
+class OpenCursorStatement(Statement):
+    def __init__(self, cursor_name: str, select_stmt: Statement):
+        self.cursor_name = cursor_name
+        self.select_stmt = select_stmt
+    def __repr__(self):
+        return f"OPEN CURSOR {self.cursor_name} FOR {self.select_stmt}"
+
+class FetchCursorStatement(Statement):
+    def __init__(self, count: int, cursor_name: str):
+        self.count = count
+        self.cursor_name = cursor_name
+    def __repr__(self):
+        return f"FETCH {self.count} FROM {self.cursor_name}"
+
+class CloseCursorStatement(Statement):
+    def __init__(self, cursor_name: str):
+        self.cursor_name = cursor_name
+    def __repr__(self):
+        return f"CLOSE CURSOR {self.cursor_name}"

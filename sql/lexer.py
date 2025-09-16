@@ -103,6 +103,10 @@ class TokenType(Enum):
     ADD = "ADD"
     COLUMN = "COLUMN"
     SHOW = "SHOW"
+    OPEN = "OPEN"
+    FETCH = "FETCH"
+    CLOSE = "CLOSE"
+    CURSOR = "CURSOR"
 
     # 布尔值
     TRUE = "TRUE"
@@ -241,6 +245,10 @@ class SQLLexer:
         "ADD": TokenType.ADD,
         "COLUMN": TokenType.COLUMN,
         "SHOW": TokenType.SHOW,
+        "OPEN": TokenType.OPEN,
+        "FETCH": TokenType.FETCH,
+        "CLOSE": TokenType.CLOSE,
+        "CURSOR": TokenType.CURSOR,
     }
 
     def __init__(self, sql: str):

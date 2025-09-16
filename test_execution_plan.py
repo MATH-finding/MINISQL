@@ -3,7 +3,12 @@
 """
 
 import os
+import sys
 import tempfile
+
+# Add parent directory to Python path for module imports
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
 from storage import PageManager, BufferManager, RecordManager
 from catalog import SystemCatalog, ColumnDefinition, DataType
 from catalog.index_manager import IndexManager

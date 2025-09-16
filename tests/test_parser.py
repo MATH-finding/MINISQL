@@ -44,6 +44,20 @@ def print_test_summary():
     else:
         print("⚠️  部分测试失败，请检查相关功能")
 
+def print_test_coverage():
+    print("\n================= 语法分析测试覆盖功能 =================")
+    print("1. CREATE TABLE/INDEX/VIEW/USER/TRIGGER：表、索引、视图、用户、触发器的创建")
+    print("2. DROP TABLE/INDEX/VIEW/USER/TRIGGER：表、索引、视图、用户、触发器的删除")
+    print("3. INSERT/DELETE/UPDATE/SELECT：数据插入、删除、更新、查询，支持JOIN、聚合、分组、排序、WHERE等")
+    print("4. GRANT/REVOKE：权限授予与回收")
+    print("5. BEGIN/START/COMMIT/ROLLBACK：事务控制")
+    print("6. SET/SHOW：系统参数设置与查询（如AUTOCOMMIT、ISOLATION LEVEL）")
+    print("7. TRUNCATE/ALTER：表截断与结构变更")
+    print("8. IF [NOT] EXISTS：存在性修饰符解析")
+    print("9. 游标相关：OPEN CURSOR、FETCH、CLOSE CURSOR，支持游标声明、批量提取、关闭")
+    print("10. 语法错误分支：缺分号、缺关键字、括号、非法token等健壮性测试")
+    print("======================================================\n")
+
 def test_parse_create_table():
     sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL, score FLOAT DEFAULT 0.0);"
     try:
@@ -451,7 +465,90 @@ def test_parse_close_cursor():
     except Exception as e:
         assert_test("测试解析CLOSE CURSOR语句", False, e)
 
+def test_parse_open_cursor_complex():
+    sql = "OPEN CURSOR c1 FOR SELECT id, name FROM users WHERE age > 18 ORDER BY id DESC;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        ast = parser.parse()
+        cond = isinstance(ast, OpenCursorStatement) and ast.cursor_name == "c1" and isinstance(ast.select_stmt, SelectStatement)
+        assert_test("测试解析OPEN CURSOR复杂SELECT", cond)
+    except Exception as e:
+        assert_test("测试解析OPEN CURSOR复杂SELECT", False, e)
+
+def test_parse_fetch_cursor_1():
+    sql = "FETCH 1 FROM c1;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        ast = parser.parse()
+        cond = isinstance(ast, FetchCursorStatement) and ast.count == 1 and ast.cursor_name == "c1"
+        assert_test("测试解析FETCH 1 FROM CURSOR", cond)
+    except Exception as e:
+        assert_test("测试解析FETCH 1 FROM CURSOR", False, e)
+
+def test_parse_close_cursor_simple():
+    sql = "CLOSE CURSOR c1;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        ast = parser.parse()
+        cond = isinstance(ast, CloseCursorStatement) and ast.cursor_name == "c1"
+        assert_test("测试解析CLOSE CURSOR语句", cond)
+    except Exception as e:
+        assert_test("测试解析CLOSE CURSOR语句", False, e)
+
+# 错误用法
+
+def test_syntax_error_open_cursor_missing_for():
+    sql = "OPEN CURSOR c1 SELECT * FROM t1;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        parser.parse()
+        assert_test("测试语法错误：OPEN CURSOR缺FOR", False, "SyntaxError expected but not raised")
+    except SyntaxError as e:
+        assert_test("测试语法错误：OPEN CURSOR缺FOR", True, e)
+
+def test_syntax_error_fetch_cursor_missing_from():
+    sql = "FETCH 10 c1;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        parser.parse()
+        assert_test("测试语法错误：FETCH缺FROM", False, "SyntaxError expected but not raised")
+    except SyntaxError as e:
+        assert_test("测试语法错误：FETCH缺FROM", True, e)
+
+def test_syntax_error_close_cursor_missing_name():
+    sql = "CLOSE CURSOR;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        parser.parse()
+        assert_test("测试语法错误：CLOSE CURSOR缺游标名", False, "SyntaxError expected but not raised")
+    except SyntaxError as e:
+        assert_test("测试语法错误：CLOSE CURSOR缺游标名", True, e)
+
+def test_syntax_error_set_invalid_param():
+    sql = "SET FOOBAR=1;"
+    try:
+        lexer = SQLLexer(sql)
+        tokens = lexer.tokenize()
+        parser = SQLParser(tokens)
+        parser.parse()
+        assert_test("测试语法错误：SET非法参数", False, "SyntaxError expected but not raised")
+    except SyntaxError as e:
+        assert_test("测试语法错误：SET非法参数", True, e)
+
 def main():
+    print_test_coverage()
     test_parse_create_table()
     test_parse_insert()
     test_parse_select()
@@ -485,7 +582,13 @@ def main():
     test_parse_open_cursor()
     test_parse_fetch_cursor()
     test_parse_close_cursor()
-
+    test_parse_open_cursor_complex()
+    test_parse_fetch_cursor_1()
+    test_parse_close_cursor_simple()
+    test_syntax_error_open_cursor_missing_for()
+    test_syntax_error_fetch_cursor_missing_from()
+    test_syntax_error_close_cursor_missing_name()
+    test_syntax_error_set_invalid_param()
 
 
 if __name__ == "__main__":

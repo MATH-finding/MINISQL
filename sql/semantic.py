@@ -268,6 +268,39 @@ class SemanticAnalyzer:
             for name in stmt.columns:
                 if name not in table_cols:
                     raise SemanticError(f"列 {name} 不存在于表 {stmt.table_name}", None, None)
+        # NOT NULL约束检查
+        if stmt.columns and hasattr(stmt, 'values') and stmt.values:
+            col_defs = [next(c for c in schema.columns if c.name == name) for name in stmt.columns]
+            for row in stmt.values:
+                # 列数检查
+                if len(row) != len(col_defs):
+                    raise SemanticError(f"插入的值数({len(row)})与列数({len(col_defs)})不一致", None, None)
+                for col_def, value in zip(col_defs, row):
+                    # NOT NULL检查（已实现）
+                    if not col_def.nullable and value is None:
+                        raise SemanticError(f"列 {col_def.name} 不允许为NULL", None, None)
+                    # 类型一致性检查
+                    if value is not None:
+                        if hasattr(value, 'value'):
+                            value = value.value
+                        expected_type = col_def.data_type.name
+                        if expected_type == "INTEGER" and not isinstance(value, int):
+                            raise SemanticError(f"列 {col_def.name} 期望INTEGER类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "FLOAT" and not (isinstance(value, float) or isinstance(value, int)):
+                            raise SemanticError(f"列 {col_def.name} 期望FLOAT类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "BOOLEAN" and not isinstance(value, bool):
+                            raise SemanticError(f"列 {col_def.name} 期望BOOLEAN类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "VARCHAR" and not isinstance(value, str):
+                            raise SemanticError(f"列 {col_def.name} 期望VARCHAR类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "CHAR" and not isinstance(value, str):
+                            raise SemanticError(f"列 {col_def.name} 期望CHAR类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "BIGINT" and not isinstance(value, int):
+                            raise SemanticError(f"列 {col_def.name} 期望BIGINT类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "TINYINT" and not isinstance(value, int):
+                            raise SemanticError(f"列 {col_def.name} 期望TINYINT类型，实际为{type(value).__name__}", None, None)
+                        if expected_type == "TEXT" and not isinstance(value, str):
+                            raise SemanticError(f"列 {col_def.name} 期望TEXT类型，实际为{type(value).__name__}", None, None)
+                        # 其它类型可按需扩展
         return AnalyzedResult(stmt)
 
     def _analyze_update(self, stmt: UpdateStatement) -> AnalyzedResult:
@@ -278,12 +311,69 @@ class SemanticAnalyzer:
         for s in stmt.set_clauses:
             if s["column"] not in table_cols:
                 raise SemanticError(f"列 {s['column']} 不存在于表 {stmt.table_name}", None, None)
+        # 类型一致性检查 for UPDATE
+        for s in stmt.set_clauses:
+            col_def = next((c for c in schema.columns if c.name == s["column"]), None)
+            if col_def is not None:
+                value = s["value"]
+                if hasattr(value, 'value'):
+                    value = value.value
+                if value is not None:
+                    expected_type = col_def.data_type.name
+                    if expected_type == "INTEGER" and not isinstance(value, int):
+                        raise SemanticError(f"列 {col_def.name} 期望INTEGER类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "FLOAT" and not (isinstance(value, float) or isinstance(value, int)):
+                        raise SemanticError(f"列 {col_def.name} 期望FLOAT类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "BOOLEAN" and not isinstance(value, bool):
+                        raise SemanticError(f"列 {col_def.name} 期望BOOLEAN类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "VARCHAR" and not isinstance(value, str):
+                        raise SemanticError(f"列 {col_def.name} 期望VARCHAR类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "CHAR" and not isinstance(value, str):
+                        raise SemanticError(f"列 {col_def.name} 期望CHAR类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "BIGINT" and not isinstance(value, int):
+                        raise SemanticError(f"列 {col_def.name} 期望BIGINT类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "TINYINT" and not isinstance(value, int):
+                        raise SemanticError(f"列 {col_def.name} 期望TINYINT类型，实际为{type(value).__name__}", None, None)
+                    if expected_type == "TEXT" and not isinstance(value, str):
+                        raise SemanticError(f"列 {col_def.name} 期望TEXT类型，实际为{type(value).__name__}", None, None)
+                    # 其它类型可按需扩展
+        # WHERE子句列名检查
+        def check_where_expr(expr):
+            if isinstance(expr, ColumnRef):
+                if expr.column_name not in table_cols:
+                    raise SemanticError(f"WHERE子句列 {expr.column_name} 不存在于表 {stmt.table_name}", None, None)
+            elif hasattr(expr, 'left') and hasattr(expr, 'right'):
+                check_where_expr(expr.left)
+                check_where_expr(expr.right)
+            elif hasattr(expr, 'arg'):
+                if isinstance(expr.arg, ColumnRef):
+                    if expr.arg.column_name not in table_cols:
+                        raise SemanticError(f"WHERE子句列 {expr.arg.column_name} 不存在于表 {stmt.table_name}", None, None)
+            # 其它类型略
+        if getattr(stmt, 'where_clause', None):
+            check_where_expr(stmt.where_clause)
         return AnalyzedResult(stmt)
 
     def _analyze_delete(self, stmt: DeleteStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
             raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
+        table_cols = {c.name for c in schema.columns}
+        # WHERE子句列名检查
+        def check_where_expr(expr):
+            if isinstance(expr, ColumnRef):
+                if expr.column_name not in table_cols:
+                    raise SemanticError(f"WHERE子句列 {expr.column_name} 不存在于表 {stmt.table_name}", None, None)
+            elif hasattr(expr, 'left') and hasattr(expr, 'right'):
+                check_where_expr(expr.left)
+                check_where_expr(expr.right)
+            elif hasattr(expr, 'arg'):
+                if isinstance(expr.arg, ColumnRef):
+                    if expr.arg.column_name not in table_cols:
+                        raise SemanticError(f"WHERE子句列 {expr.arg.column_name} 不存在于表 {stmt.table_name}", None, None)
+            # 其它类型略
+        if getattr(stmt, 'where_clause', None):
+            check_where_expr(stmt.where_clause)
         return AnalyzedResult(stmt)
 
     def _analyze_create_table(self, stmt: CreateTableStatement) -> AnalyzedResult:
@@ -294,6 +384,21 @@ class SemanticAnalyzer:
             return AnalyzedResult(stmt)
         if schema:
             raise SemanticError(f"表 {stmt.table_name} 已存在", None, None)
+        # 重复列名检查
+        col_names = [col['name'] if isinstance(col, dict) else getattr(col, 'name', None) for col in stmt.columns]
+        if len(col_names) != len(set(col_names)):
+            raise SemanticError(f"表 {stmt.table_name} 存在重复列名", None, None)
+        # 多主键检查
+        pk_count = 0
+        for col in stmt.columns:
+            if isinstance(col, dict):
+                constraints = col.get('constraints', [])
+            else:
+                constraints = getattr(col, 'constraints', [])
+            if 'PRIMARY KEY' in constraints:
+                pk_count += 1
+        if pk_count > 1:
+            raise SemanticError(f"表 {stmt.table_name} 存在多个主键", None, None)
         return AnalyzedResult(stmt)
 
     def _analyze_drop_table(self, stmt: DropTableStatement) -> AnalyzedResult:

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from sql.lexer import SQLLexer
 from sql.parser import SQLParser
-from sql.planner_interface import PlanGeneratorInterface
+from interface.planner_interface import PlanGeneratorInterface
 from sql.plan_nodes import *
 from catalog import SystemCatalog, TableSchema, ColumnDefinition, DataType
 from storage.page_manager import PageManager
@@ -73,8 +73,11 @@ def test_plan_create_table():
         planner_interface = PlanGeneratorInterface(catalog, index_manager=None)
 
         plan = planner_interface.planner.generate_plan(ast)
-        assert_test("测试CREATE TABLE的执行计划", isinstance(plan, CreateTableNode))
-        assert_test("测试CREATE TABLE的执行计划", plan.table_name == "new_table")
+        ok1 = assert_test("测试CREATE TABLE的执行计划", isinstance(plan, CreateTableNode))
+        if ok1:
+            print("执行计划树：")
+            print(plan.to_tree_string())
+        ok2 = assert_test("测试CREATE TABLE的执行计划", plan.table_name == "new_table")
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -111,9 +114,12 @@ def test_plan_insert():
         planner_interface = PlanGeneratorInterface(catalog, index_manager=None)
 
         plan = planner_interface.planner.generate_plan(ast)
-        assert_test("测试INSERT的执行计划", isinstance(plan, InsertNode))
-        assert_test("测试INSERT的执行计划", plan.table_name == 'users')
-        assert_test("测试INSERT的执行计划", plan.values[0] == [1, 'Alice'])
+        ok1 = assert_test("测试INSERT的执行计划", isinstance(plan, InsertNode))
+        if ok1:
+            print("执行计划树：")
+            print(plan.to_tree_string())
+        ok2 = assert_test("测试INSERT的执行计划", plan.table_name == 'users')
+        ok3 = assert_test("测试INSERT的执行计划", plan.values[0] == [1, 'Alice'])
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -150,8 +156,11 @@ def test_plan_seq_scan():
         planner_interface = PlanGeneratorInterface(catalog, index_manager=None)
 
         plan = planner_interface.planner.generate_plan(ast)
-        assert_test("测试简单SELECT生成的SeqScan计划", isinstance(plan, SeqScanNode))
-        assert_test("测试简单SELECT生成的SeqScan计划", plan.table_name == 'users')
+        ok1 = assert_test("测试简单SELECT生成的SeqScan计划", isinstance(plan, SeqScanNode))
+        if ok1:
+            print("执行计划树：")
+            print(plan.to_tree_string())
+        ok2 = assert_test("测试简单SELECT生成的SeqScan计划", plan.table_name == 'users')
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -188,8 +197,11 @@ def test_plan_filter():
         planner_interface = PlanGeneratorInterface(catalog, index_manager=None)
 
         plan = planner_interface.planner.generate_plan(ast)
-        assert_test("测试带WHERE的SELECT生成的Filter + SeqScan计划", isinstance(plan, FilterNode))
-        assert_test("测试带WHERE的SELECT生成的Filter + SeqScan计划", isinstance(plan.children[0], SeqScanNode))
+        ok1 = assert_test("测试带WHERE的SELECT生成的Filter + SeqScan计划", isinstance(plan, FilterNode))
+        if ok1:
+            print("执行计划树：")
+            print(plan.to_tree_string())
+        ok2 = assert_test("测试带WHERE的SELECT生成的Filter + SeqScan计划", isinstance(plan.children[0], SeqScanNode))
         # 假设 plan.condition 暴露了 BinaryOp 或类似的结构
         # assert_test("测试带WHERE的SELECT生成的Filter + SeqScan计划", isinstance(plan.condition, BinaryOp)) # 这行可能需要根据你的实际实现调整
     finally:
@@ -228,9 +240,12 @@ def test_plan_project():
         planner_interface = PlanGeneratorInterface(catalog, index_manager=None)
 
         plan = planner_interface.planner.generate_plan(ast)
-        assert_test("测试选择部分列的SELECT生成的Project计划", isinstance(plan, ProjectNode))
-        assert_test("测试选择部分列的SELECT生成的Project计划", isinstance(plan.children[0], SeqScanNode))
-        assert_test("测试选择部分列的SELECT生成的Project计划", len(plan.select_list) == 1)
+        ok1 = assert_test("测试选择部分列的SELECT生成的Project计划", isinstance(plan, ProjectNode))
+        if ok1:
+            print("执行计划树：")
+            print(plan.to_tree_string())
+        ok2 = assert_test("测试选择部分列的SELECT生成的Project计划", isinstance(plan.children[0], SeqScanNode))
+        ok3 = assert_test("测试选择部分列的SELECT生成的Project计划", len(plan.select_list) == 1)
     finally:
         tmpfile.close()
         os.remove(tmpfile.name)
@@ -268,10 +283,13 @@ def test_plan_output_formats():
 
         # 测试树形输出
         result_tree = planner_interface.generate_execution_plan(ast, output_format='tree')
-        assert_test("测试不同格式的计划输出 - 树形输出", result_tree['success'], "树形输出失败")
-        assert_test("测试不同格式的计划输出 - 树形输出", 'Project' in result_tree['plan'])
-        assert_test("测试不同格式的计划输出 - 树形输出", 'Filter' in result_tree['plan'])
-        assert_test("测试不同格式的计划输出 - 树形输出", 'SeqScan' in result_tree['plan'])
+        ok1 = assert_test("测试不同格式的计划输出 - 树形输出", result_tree['success'], "树形输出失败")
+        if ok1:
+            print("执行计划树：")
+            print(result_tree['plan'])
+        ok2 = assert_test("测试不同格式的计划输出 - 树形输出", 'Project' in result_tree['plan'])
+        ok3 = assert_test("测试不同格式的计划输出 - 树形输出", 'Filter' in result_tree['plan'])
+        ok4 = assert_test("测试不同格式的计划输出 - 树形输出", 'SeqScan' in result_tree['plan'])
 
         # 测试JSON输出
         result_json = planner_interface.generate_execution_plan(ast, output_format='json')
