@@ -48,14 +48,14 @@ class DatabaseWebAPI:
             # 为每个Web会话创建独立的数据库会话
             if not hasattr(self, '_web_sessions'):
                 self._web_sessions = {}
-            
+
             if not hasattr(self, '_user_selected_sessions'):
                 self._user_selected_sessions = {}
-            
+
             if session_id not in self._web_sessions:
                 # 创建新的数据库会话
                 self._web_sessions[session_id] = self.db.new_session()
-            
+
             # 检查用户是否通过 \session use 选择了特定会话
             if session_id in self._user_selected_sessions:
                 # 使用用户选择的会话 - 确保真正切换
@@ -67,7 +67,7 @@ class DatabaseWebAPI:
             else:
                 # 使用默认的Web会话
                 self.db.use_session(self._web_sessions[session_id])
-        
+
         return self.db
 
     def _require_auth(self):
@@ -915,7 +915,7 @@ class DatabaseWebAPI:
                                     <span id="current-user-txn">-</span>
                                 </div>
                             </div>
-                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">刷新状态</button>
+                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">手动刷新</button>
                         </div>
 
                         <!-- 事务控制 -->
@@ -1018,13 +1018,22 @@ class DatabaseWebAPI:
         
                 // 显示消息
                 function showMessage(element, message, isError = false) {
-                    const alertClass = isError ? 'alert-error' : 'alert-success';
-                    element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
-                    setTimeout(() => {
-                        if (element.querySelector('.alert')) {
-                            element.querySelector('.alert').remove();
-                        }
-                    }, 5000);
+                    if (!element) {
+                        console.warn('showMessage: 目标元素为null');
+                        return;
+                    }
+                    
+                    try {
+                        const alertClass = isError ? 'alert-error' : 'alert-success';
+                        element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+                        setTimeout(() => {
+                            if (element && element.querySelector('.alert')) {
+                                element.querySelector('.alert').remove();
+                            }
+                        }, 5000);
+                    } catch (e) {
+                        console.warn('showMessage 执行失败:', e);
+                    }
                 }
 
                 // 登录
@@ -1083,6 +1092,8 @@ class DatabaseWebAPI:
 
                 // 切换标签页
                 function showTab(tabId) {
+                    console.log('切换到标签页:', tabId);
+                    
                     // 隐藏所有标签页内容
                     const contents = document.querySelectorAll('.tab-content');
                     contents.forEach(content => content.classList.remove('active'));
@@ -1092,21 +1103,38 @@ class DatabaseWebAPI:
                     tabs.forEach(tab => tab.classList.remove('active'));
 
                     // 显示选中的标签页
-                    document.getElementById(tabId).classList.add('active');
+                    const targetContent = document.getElementById(tabId);
+                    if (targetContent) {
+                        targetContent.classList.add('active');
+                        console.log('显示内容区域:', tabId);
+                    } else {
+                        console.error('未找到内容区域:', tabId);
+                    }
 
                     // 激活对应的标签
+                    const tabText = getTabText(tabId);
+                    console.log('查找标签文本:', tabText);
                     const activeTab = Array.from(tabs).find(tab => 
-                        tab.textContent.includes(getTabText(tabId))
+                        tab.textContent.includes(tabText)
                     );
-                    if (activeTab) activeTab.classList.add('active');
+                    if (activeTab) {
+                        activeTab.classList.add('active');
+                        console.log('激活标签:', activeTab.textContent);
+                    } else {
+                        console.error('未找到对应的标签:', tabText);
+                    }
 
                     // 关闭侧边栏
-                    document.getElementById('sidebar').classList.remove('open');
+                    const sidebar = document.getElementById('sidebar');
+                    if (sidebar) {
+                        sidebar.classList.remove('open');
+                    }
                 }
 
                 function getTabText(tabId) {
                     const map = {
                         'sql-tab': 'SQL 查询',
+                        'transaction-tab': '事务管理',
                         'tables-tab': '表管理',
                         'views-tab': '视图管理',
                         'indexes-tab': '索引管理',
@@ -1198,6 +1226,22 @@ class DatabaseWebAPI:
                                         html += '<thead><tr><th>当前用户</th></tr></thead>';
                                         html += '<tbody><tr><td>' + result.data[0].current_user + '</td></tr></tbody>';
                                         html += '</table></div>';
+                                    }else if (Array.isArray(result.data[0])) {
+                                        // 数组数据（如会话列表、表列表等）
+                                        html += '<div class="result-table"><table>';
+                                        html += '<thead><tr>';
+                                        Object.keys(result.data[0]).forEach(key => {
+                                            html += `<th>${key}</th>`;
+                                        });
+                                        html += '</tr></thead><tbody>';
+                                        result.data.forEach(item => {
+                                            html += '<tr>';
+                                            Object.values(item).forEach(value => {
+                                                html += `<td>${value}</td>`;
+                                            });
+                                            html += '</tr>';
+                                        });
+                                        html += '</tbody></table></div>';
                                     } else {
                                         // 其他数据 - 修正这里的处理逻辑
                                         html += '<div class="result-table"><table>';
@@ -1217,7 +1261,6 @@ class DatabaseWebAPI:
                                     }
                                 }
                             }
-
                             // 如果是SELECT查询，显示表格
                             else if (result.formatted && result.formatted.columns) {
                                 html += '<div class="result-table"><table>';
@@ -1250,6 +1293,23 @@ class DatabaseWebAPI:
                         }
                         
                         resultEl.innerHTML = finalHtml;
+                        
+                        // 检查是否执行了事务相关的SQL，如果是则刷新事务状态
+                        const transactionKeywords = ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK', 'SET AUTOCOMMIT', 'SET SESSION TRANSACTION'];
+                        const upperSql = sql.toUpperCase();
+                        const hasTransactionCommand = transactionKeywords.some(keyword => upperSql.includes(keyword));
+                        
+                        if (hasTransactionCommand) {
+                            console.log('检测到事务相关命令，刷新事务状态');
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 500);
+                        } else {
+                            // 对于其他SQL命令，也刷新事务状态以确保一致性
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 200);
+                        }
                         
                     } catch (error) {
                         showMessage(resultEl, '请求失败: ' + error.message, true);
@@ -1675,6 +1735,25 @@ class DatabaseWebAPI:
 
                 // ==================== 事务管理功能 ====================
 
+                // 初始化事务按钮状态
+                function initializeTransactionButtons() {
+                    console.log('初始化事务按钮状态 - 所有按钮启用');
+                    const beginBtn = document.getElementById('begin-btn');
+                    const commitBtn = document.getElementById('commit-btn');
+                    const rollbackBtn = document.getElementById('rollback-btn');
+                    
+                    if (beginBtn && commitBtn && rollbackBtn) {
+                        // 所有按钮都启用，在执行时再检查状态
+                        beginBtn.disabled = false;
+                        commitBtn.disabled = false;
+                        rollbackBtn.disabled = false;
+                        console.log('所有按钮已启用');
+                    } else {
+                        console.error('无法找到事务按钮元素');
+                    }
+                }
+
+
                 // 刷新事务状态
                 async function refreshTransactionStatus() {
                     try {
@@ -1684,35 +1763,23 @@ class DatabaseWebAPI:
                             credentials: 'include'
                         });
 
+                        if (!response.ok) {
+                            console.error('获取事务状态失败:', response.status, response.statusText);
+                            return;
+                        }
+
                         const result = await response.json();
                         console.log('事务状态响应:', result);
 
                         if (result.success) {
                             const data = result.data;
+                            console.log('事务状态数据:', data);
+                            
                             document.getElementById('session-id').textContent = data.session_id || '-';
                             document.getElementById('autocommit-status').textContent = data.autocommit ? '是' : '否';
                             document.getElementById('transaction-state').textContent = data.in_transaction ? '进行中' : '未开始';
                             document.getElementById('isolation-level').textContent = data.isolation_level || '-';
                             document.getElementById('current-user-txn').textContent = data.current_user || '-';
-
-                            // 更新按钮状态
-                            const beginBtn = document.getElementById('begin-btn');
-                            const commitBtn = document.getElementById('commit-btn');
-                            const rollbackBtn = document.getElementById('rollback-btn');
-
-                            console.log('更新按钮状态，事务状态:', data.in_transaction);
-                            
-                            if (data.in_transaction) {
-                                beginBtn.disabled = true;
-                                commitBtn.disabled = false;
-                                rollbackBtn.disabled = false;
-                                console.log('禁用开始事务按钮');
-                            } else {
-                                beginBtn.disabled = false;
-                                commitBtn.disabled = true;
-                                rollbackBtn.disabled = true;
-                                console.log('启用开始事务按钮');
-                            }
 
                             // 更新自动提交复选框
                             document.getElementById('autocommit-checkbox').checked = data.autocommit;
@@ -1730,17 +1797,35 @@ class DatabaseWebAPI:
 
                 // 开始事务
                 async function beginTransaction() {
+                    console.log('开始事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前已有活动事务，请先提交或回滚', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/begin', {
                             method: 'POST',
                             credentials: 'include'
                         });
 
                         const result = await response.json();
+                        console.log('开始事务响应:', result);
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已开始', false);
-                            refreshTransactionStatus();
+                            // 刷新事务状态
+                            setTimeout(() => {
+                                console.log('强制刷新事务状态');
+                                refreshTransactionStatus();
+                            }, 200);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '开始事务失败: ' + result.message, true);
                         }
@@ -1751,7 +1836,20 @@ class DatabaseWebAPI:
 
                 // 提交事务
                 async function commitTransaction() {
+                    console.log('提交事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && !statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前没有活动事务，无法提交', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/commit', {
                             method: 'POST',
                             credentials: 'include'
@@ -1761,7 +1859,10 @@ class DatabaseWebAPI:
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已提交', false);
-                            refreshTransactionStatus();
+                            // 刷新状态
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 100);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '提交事务失败: ' + result.message, true);
                         }
@@ -1772,7 +1873,20 @@ class DatabaseWebAPI:
 
                 // 回滚事务
                 async function rollbackTransaction() {
+                    console.log('回滚事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && !statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前没有活动事务，无法回滚', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/rollback', {
                             method: 'POST',
                             credentials: 'include'
@@ -1782,7 +1896,10 @@ class DatabaseWebAPI:
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已回滚', false);
-                            refreshTransactionStatus();
+                            // 刷新状态
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 100);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '回滚事务失败: ' + result.message, true);
                         }
@@ -2181,6 +2298,9 @@ class DatabaseWebAPI:
                         }
                     }, 1000);
                     
+                    // 初始化按钮状态
+                    initializeTransactionButtons();
+                    
                     // 添加调试信息
                     console.log('页面加载完成，准备刷新事务状态');
                 });
@@ -2465,7 +2585,7 @@ class DatabaseWebAPI:
                         'success': False,
                         'message': 'SQL语句不能为空'
                     }), 400
-                
+
                 # --- 综合修复：自动清理和校正常见的输入问题 ---
                 # 1. 将不可见的非中断空格(U+00A0)替换为标准空格
                 sql = sql.replace('\u00A0', ' ')
@@ -2475,7 +2595,6 @@ class DatabaseWebAPI:
                 sql = sql.strip()
                 # --- 修复结束 ---
 
-            
                 # 按分号分割语句，并过滤空语句
                 stmts = [s.strip() for s in sql.split(';') if s.strip()]
                 if not stmts:
@@ -2510,11 +2629,11 @@ class DatabaseWebAPI:
 
                     # 格式化SELECT查询结果
                     if (result.get('success') and
-                        result.get('type') == 'SELECT' and
-                        'data' in result and
-                        isinstance(result['data'], list)):
+                            result.get('type') == 'SELECT' and
+                            'data' in result and
+                            isinstance(result['data'], list)):
                         result['formatted'] = self._format_select_for_web(result['data'])
-                    
+
                     all_results.append(result)
 
                 # 如果只有一条语句，为保持兼容性，直接返回结果
@@ -2527,7 +2646,7 @@ class DatabaseWebAPI:
                         'message': f'成功执行 {len(all_results)} 条语句。',
                         'results': all_results
                     })
-          
+
 
             except Exception as e:
                 logger.error(f"SQL执行错误: {e}")
@@ -2536,7 +2655,6 @@ class DatabaseWebAPI:
                     'message': f'SQL执行失败: {str(e)}',
                     'error': str(e)
                 }), 500
-
         @self.app.route('/api/tables', methods=['GET'])
         def list_tables():
             """获取表列表"""
@@ -2833,7 +2951,7 @@ class DatabaseWebAPI:
 
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
-                
+
                 # 直接执行这个完整的、由客户端保证语法正确的SQL语句
                 result = db.execute_sql(sql)
 
@@ -2937,7 +3055,7 @@ class DatabaseWebAPI:
                 return jsonify({'success': False, 'error': str(e)})
 
         # ==================== 事务管理API ====================
-        
+
         @self.app.route('/api/transaction/begin', methods=['POST'])
         def begin_transaction():
             """开始事务"""
@@ -2998,32 +3116,39 @@ class DatabaseWebAPI:
 
             try:
                 session_id = self._get_session_id()
+                logger.info(f"获取事务状态，会话ID: {session_id}")
+
                 db = self._get_db(session_id)
-                
+                logger.info(f"数据库连接成功")
+
                 # 获取当前会话信息
                 sessions = db.list_sessions()
+                logger.info(f"所有会话: {sessions}")
+
                 current_session = None
                 for s in sessions:
                     if s['current']:
                         current_session = s
                         break
-                
+
                 if current_session:
+                    logger.info(f"当前会话信息: {current_session}")
                     return jsonify({
                         'success': True,
                         'data': {
                             'session_id': current_session['session_id'],
                             'autocommit': current_session['autocommit'],
-                            'in_transaction': current_session['in_txn'],
+                            'in_transaction': current_session['in_txn'],  # 保持字段名一致
                             'isolation_level': current_session['isolation'],
                             'current_user': session.get('username', 'unknown')
                         }
                     })
                 else:
+                    logger.error("未找到当前会话")
                     return jsonify({'success': False, 'message': '无法获取会话状态'}), 500
 
             except Exception as e:
-                logger.error(f"获取事务状态失败: {e}")
+                logger.error(f"获取事务状态失败: {e}", exc_info=True)
                 return jsonify({'success': False, 'message': f'获取事务状态失败: {str(e)}'}), 500
 
         @self.app.route('/api/transaction/isolation', methods=['POST'])
@@ -3040,10 +3165,10 @@ class DatabaseWebAPI:
 
                 level = data.get('level', '').strip().upper()
                 valid_levels = ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE']
-                
+
                 if level not in valid_levels:
                     return jsonify({
-                        'success': False, 
+                        'success': False,
                         'message': f'无效的隔离级别。支持: {", ".join(valid_levels)}'
                     }), 400
 
@@ -3089,7 +3214,7 @@ class DatabaseWebAPI:
                 session_id = self._get_session_id()
                 db = self._get_db(session_id)
                 sessions = db.list_sessions()
-                
+
                 return jsonify({
                     'success': True,
                     'data': sessions
@@ -3234,7 +3359,7 @@ class DatabaseWebAPI:
             return self._handle_show_stats(db)
 
         # 会话管理命令
-        elif command.startswith("session"):
+        elif command.startswith("\\session") or command.startswith("\\\\session"):
             return self._handle_session_command(command, db)
 
         # 事务管理命令
@@ -3577,18 +3702,15 @@ class DatabaseWebAPI:
             return self._handle_session_list(db)
         elif parts[1] == "new":
             return self._handle_session_new(db)
-        elif parts[1] == "use" and len(parts) >= 3:
-            try:
-                session_id = int(parts[2])
-                return self._handle_session_use(session_id, db)
-            except ValueError:
-                return {"success": False, "message": "请输入有效的会话编号", "data": []}
+        elif parts[1] == "use" and len(parts) > 2:
+            session_id = int(parts[2])
+            return self._handle_session_use(session_id, db)
         elif parts[1] in ["info", "status"]:
             return self._handle_session_info(db)
         else:
             return {
                 "success": False,
-                "message": "用法: session [list|new|use <id>|info]",
+                "message": "用法: \\session [list|new|use <id>|info]",
                 "data": []
             }
 
@@ -3853,7 +3975,7 @@ class DatabaseWebAPI:
                 "message": f"获取会话列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_session_new(self, db) -> dict:
         """处理 \\session new 命令"""
         try:
@@ -3870,14 +3992,14 @@ class DatabaseWebAPI:
                 "message": f"创建新会话失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_session_use(self, session_id: int, db) -> dict:
         """处理 \\session use <id> 命令"""
         try:
             # 检查会话是否存在
             sessions = db.list_sessions()
             valid_session_ids = [s['id'] for s in sessions]
-            
+
             if session_id not in valid_session_ids:
                 return {
                     "success": False,
@@ -3885,13 +4007,13 @@ class DatabaseWebAPI:
                     "data": [],
                     "type": "SHELL_COMMAND"
                 }
-            
+
             # 真正切换到目标会话
             web_session_id = self._get_session_id()
             if not hasattr(self, '_user_selected_sessions'):
                 self._user_selected_sessions = {}
             self._user_selected_sessions[web_session_id] = session_id
-            
+
             # 真正切换数据库会话
             success = db.use_session(session_id)
             if not success:
@@ -3901,10 +4023,10 @@ class DatabaseWebAPI:
                     "data": [],
                     "type": "SHELL_COMMAND"
                 }
-            
+
             # 获取目标会话的信息
             target_session = next((s for s in sessions if s['id'] == session_id), None)
-            
+
             return {
                 "success": True,
                 "message": f"已成功切换到会话 {session_id}。现在可以在此会话中开始事务。",
@@ -3922,13 +4044,13 @@ class DatabaseWebAPI:
                 "data": [],
                 "type": "SHELL_COMMAND"
             }
-    
+
     def _handle_session_info(self, db) -> dict:
         """处理 \\session info 命令"""
         try:
             sessions = db.list_sessions()
             current_session = next((s for s in sessions if s["current"]), None)
-            
+
             if current_session:
                 return {
                     "success": True,
@@ -3982,7 +4104,7 @@ class DatabaseWebAPI:
                 "message": f"获取视图列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_indexes(self, db) -> dict:
         """处理 \\indexes 命令"""
         try:
@@ -4006,7 +4128,7 @@ class DatabaseWebAPI:
                 "message": f"获取索引列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_stats(self, db) -> dict:
         """处理 \\stats 命令"""
         try:
@@ -4023,7 +4145,7 @@ class DatabaseWebAPI:
                 "message": f"获取统计信息失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_show_users(self, db) -> dict:
         """处理 \\users 命令"""
         try:
@@ -4041,7 +4163,7 @@ class DatabaseWebAPI:
                 "message": f"获取用户列表失败: {str(e)}",
                 "data": []
             }
-    
+
     def _handle_whoami(self, db) -> dict:
         """处理 \\whoami 命令"""
         try:
