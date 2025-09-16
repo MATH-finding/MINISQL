@@ -115,7 +115,7 @@ class SemanticAnalyzer:
 
             schema = self.catalog.get_table_schema(table_name)
             if not schema:
-                raise SemanticError(f"表 {table_name} 不存在")
+                raise SemanticError(f"表 {table_name} 不存在", None, None)
             col_map: Dict[str, Dict] = {}
             for col in schema.columns:
                 col_map[col.name] = {"name": col.name, "type": getattr(col.data_type, "name", str(col.data_type))}
@@ -129,7 +129,7 @@ class SemanticAnalyzer:
                 dfs(node.left)
                 dfs(node.right)
             else:
-                raise SemanticError("未知的from_table类型")
+                raise SemanticError("未知的from_table类型", None, None)
 
         dfs(from_table)
         return visible, table_schemas
@@ -140,9 +140,9 @@ class SemanticAnalyzer:
         name = col.column_name
         candidates = visible.get(name, [])
         if len(candidates) == 0:
-            raise SemanticError(f"列 {name} 不存在")
+            raise SemanticError(f"列 {name} 不存在", getattr(col, 'line', None), getattr(col, 'column', None))
         if len(candidates) > 1:
-            raise SemanticError(f"列 {name} 不明确，请加表前缀")
+            raise SemanticError(f"列 {name} 不明确，请加表前缀", getattr(col, 'line', None), getattr(col, 'column', None))
         table_name, column_name = candidates[0]
         return ColumnRef(column_name, table_name)
 
@@ -214,7 +214,7 @@ class SemanticAnalyzer:
             if isinstance(g, ColumnRef):
                 resolved_group_by.append(self._resolve_column(g, visible))
             else:
-                raise SemanticError("GROUP BY 只支持列名")
+                raise SemanticError("GROUP BY 只支持列名", None, None)
 
         # 聚合与 GROUP BY 规则校验
         has_agg = any(isinstance(c, AggregateFunction) for c in resolved_columns)
@@ -223,7 +223,7 @@ class SemanticAnalyzer:
             group_names = {g.column_name for g in resolved_group_by}
             for c in resolved_columns:
                 if isinstance(c, ColumnRef) and c.column_name not in group_names:
-                    raise SemanticError("GROUP BY 查询中，非聚合列必须包含在分组键中")
+                    raise SemanticError("非聚合列必须包含在分组键中", getattr(c, 'line', None), getattr(c, 'column', None))
 
         # ORDER BY 消解到输出列名（优先）或可见列
         resolved_order_by: List[OrderItem] = []
@@ -239,10 +239,10 @@ class SemanticAnalyzer:
                 resolved = self._resolve_column(expr, visible)
                 key_name = resolved.column_name
                 if key_name not in output_names_after:
-                    raise SemanticError(f"ORDER BY 列 {key_name} 必须出现在选择列表中")
+                    raise SemanticError(f"ORDER BY 列 {key_name} 必须出现在选择列表中", getattr(expr, 'line', None), getattr(expr, 'column', None))
                 resolved_order_by.append(OrderItem(ColumnRef(key_name), item.direction))
             else:
-                raise SemanticError("ORDER BY 只支持列名")
+                raise SemanticError("ORDER BY 只支持列名", None, None)
 
         # 写回 AST
         stmt.columns = resolved_columns
@@ -261,29 +261,29 @@ class SemanticAnalyzer:
     def _analyze_insert(self, stmt: InsertStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在")
+            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
         # 列存在性
         if stmt.columns:
             table_cols = {c.name for c in schema.columns}
             for name in stmt.columns:
                 if name not in table_cols:
-                    raise SemanticError(f"列 {name} 不存在于表 {stmt.table_name}")
+                    raise SemanticError(f"列 {name} 不存在于表 {stmt.table_name}", None, None)
         return AnalyzedResult(stmt)
 
     def _analyze_update(self, stmt: UpdateStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在")
+            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
         table_cols = {c.name for c in schema.columns}
         for s in stmt.set_clauses:
             if s["column"] not in table_cols:
-                raise SemanticError(f"列 {s['column']} 不存在于表 {stmt.table_name}")
+                raise SemanticError(f"列 {s['column']} 不存在于表 {stmt.table_name}", None, None)
         return AnalyzedResult(stmt)
 
     def _analyze_delete(self, stmt: DeleteStatement) -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在")
+            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
         return AnalyzedResult(stmt)
 
     def _analyze_create_table(self, stmt: CreateTableStatement) -> AnalyzedResult:
@@ -293,7 +293,7 @@ class SemanticAnalyzer:
             # 已存在且 IF NOT EXISTS，直接通过
             return AnalyzedResult(stmt)
         if schema:
-            raise SemanticError(f"表 {stmt.table_name} 已存在")
+            raise SemanticError(f"表 {stmt.table_name} 已存在", None, None)
         return AnalyzedResult(stmt)
 
     def _analyze_drop_table(self, stmt: DropTableStatement) -> AnalyzedResult:
@@ -302,7 +302,7 @@ class SemanticAnalyzer:
             # 不存在且 IF EXISTS，直接通过
             return AnalyzedResult(stmt)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在")
+            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
         return AnalyzedResult(stmt)
 
     # 你可以按需为索引、视图、用户等类似扩展 
@@ -312,15 +312,15 @@ class SemanticAnalyzer:
         # 检查表是否存在
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在")
+            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
         
         # 检查事件是否合法
         if stmt.event not in ('INSERT', 'UPDATE', 'DELETE'):
-            raise SemanticError(f"不支持的事件类型: {stmt.event}")
+            raise SemanticError(f"不支持的事件类型: {stmt.event}", None, None)
             
         # 检查时机是否合法
         if stmt.timing not in ('BEFORE', 'AFTER'):
-            raise SemanticError(f"不支持的触发时机: {stmt.timing}")
+            raise SemanticError(f"不支持的触发时机: {stmt.timing}", None, None)
         
         # 触发器体的语义分析在执行阶段进行（因为可能引用当前表）
         return AnalyzedResult(stmt)
@@ -333,15 +333,15 @@ class SemanticAnalyzer:
     def _analyze_alter_table(self, stmt: 'AlterTableStatement') -> AnalyzedResult:
         schema = self.catalog.get_table_schema(stmt.table_name)
         if not schema:
-            raise SemanticError(f"表 {stmt.table_name} 不存在")
+            raise SemanticError(f"表 {stmt.table_name} 不存在", None, None)
         if stmt.action == 'ADD':
             col_name = stmt.column_def['name']
             if any(c.name == col_name for c in schema.columns):
-                raise SemanticError(f"列 {col_name} 已存在于表 {stmt.table_name}")
+                raise SemanticError(f"列 {col_name} 已存在于表 {stmt.table_name}", None, None)
         elif stmt.action == 'DROP':
             col_name = stmt.column_name
             if not any(c.name == col_name for c in schema.columns):
-                raise SemanticError(f"列 {col_name} 不存在于表 {stmt.table_name}")
+                raise SemanticError(f"列 {col_name} 不存在于表 {stmt.table_name}", None, None)
         else:
-            raise SemanticError(f"ALTER TABLE 不支持的操作: {stmt.action}")
+            raise SemanticError(f"ALTER TABLE 不支持的操作: {stmt.action}", None, None)
         return AnalyzedResult(stmt)

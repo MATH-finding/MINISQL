@@ -52,12 +52,10 @@ class PageManager:
         self._load_header()
 
     def _ensure_file_exists(self):
-        """确保数据库文件存在"""
-        if not os.path.exists(self.db_file):
+        # 如果文件不存在或文件小于4字节，写入4字节的0作为头部
+        if not os.path.exists(self.db_file) or os.path.getsize(self.db_file) < 4:
             with open(self.db_file, "wb") as f:
-                header = bytearray(Page.PAGE_SIZE)
-                struct.pack_into("<I", header, 0, 1)  # next_page_id = 1
-                f.write(header)
+                f.write(b"\x00\x00\x00\x00")
 
     def _load_header(self):
         """加载文件头部信息"""

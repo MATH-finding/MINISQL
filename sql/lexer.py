@@ -120,6 +120,9 @@ class TokenType(Enum):
     LESS_EQUAL = "<="
     GREATER_EQUAL = ">="
     NOT_EQUAL = "!="
+    PLUS = "+"
+    MINUS = "-"
+    SLASH = "/"
 
     # 分隔符
     COMMA = ","
@@ -279,6 +282,14 @@ class SQLLexer:
                 self._read_greater_than()
             elif char == "!":
                 self._read_not_equal()
+            elif char == "+":
+                self._add_single_char_token(TokenType.PLUS, char)
+            elif char == "-":
+                self._add_single_char_token(TokenType.MINUS, char)
+            elif char == "*":
+                self._add_single_char_token(TokenType.STAR, char)
+            elif char == "/":
+                self._add_single_char_token(TokenType.SLASH, char)
             elif char == ",":
                 self._add_single_char_token(TokenType.COMMA, char)
             elif char == ";":

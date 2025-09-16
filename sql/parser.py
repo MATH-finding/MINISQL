@@ -8,90 +8,102 @@ from .ast_nodes import *
 
 
 class SQLParser:
-    """SQL语法分析器"""
+    """SQL语法分析器
+    负责将Token流解析为AST语法树，支持多种SQL语句类型，包括DDL、DML、事务、权限、视图、触发器等。
+    """
 
     def __init__(self, tokens: List[Token]):
+        # 初始化，保存token流和当前位置
         self.tokens = tokens
         self.position = 0
         self.current_token = tokens[0] if tokens else None
 
     def parse(self) -> Statement:
-        """解析SQL语句（token流已去除#注释）"""
-        # 检查是否有中文分号
+        """解析SQL语句（token流已去除#注释）
+        主入口，根据首个token类型分发到不同的解析分支。
+        """
+        # 检查是否有中文分号，防止中英文符号混用导致解析异常
         for t in self.tokens:
             if t.value == '；':
                 raise SyntaxError("仅支持英文分号 ';' 作为语句结束符，检测到中文分号 '；'")
-        # # 语句必须以英文分号结尾
-        # if not self.tokens or self.tokens[-1].type != TokenType.SEMICOLON:
-        #     raise SyntaxError("SQL语句必须以英文分号 ';' 结尾")
-        # DEBUG: 入口日志
-        # print(f"[PARSER DEBUG] parse() entry, current_token={self.current_token}")
+        # 如果token流为空或第一个token就是EOF，说明SQL为空，直接报错
         if not self.current_token or self.current_token.type == TokenType.EOF:
             raise SyntaxError("空的SQL语句")
+        # 下面根据首token类型分发到不同的解析分支，每个分支都对应一种SQL语句类型
         if self.current_token.type == TokenType.CREATE:
-            # CREATE USER
+            # CREATE USER分支，专门处理用户创建
             if self._peek_token_type(1) == TokenType.USER:
-                return self._parse_create_user()
-            # CREATE VIEW
+                result = self._parse_create_user()
+            # CREATE VIEW分支，专门处理视图创建
             elif self._peek_token_type(1) == TokenType.VIEW:
-                # print("[PARSER DEBUG] dispatching to _parse_create_view")
-                return self._parse_create_view()
-            # CREATE TRIGGER
+                result = self._parse_create_view()
+            # CREATE TRIGGER分支，专门处理触发器创建
             elif self._peek_token_type(1) == TokenType.TRIGGER:
-                return self._parse_create_trigger()
-            # CREATE TABLE/INDEX
+                result = self._parse_create_trigger()
+            # 其他CREATE分支，统一处理TABLE/INDEX等
             else:
-                # print("[PARSER DEBUG] dispatching to _parse_create_statement")
-                return self._parse_create_statement()
+                result = self._parse_create_statement()
         elif self.current_token.type == TokenType.DROP:
-            # DROP USER
+            # DROP USER分支，专门处理用户删除
             if self._peek_token_type(1) == TokenType.USER:
-                return self._parse_drop_user()
-            # DROP VIEW
+                result = self._parse_drop_user()
+            # DROP VIEW分支，专门处理视图删除
             elif self._peek_token_type(1) == TokenType.VIEW:
-                # print("[PARSER DEBUG] dispatching to _parse_drop_view")
-                return self._parse_drop_view()
-            # DROP TRIGGER
+                result = self._parse_drop_view()
+            # DROP TRIGGER分支，专门处理触发器删除
             elif self._peek_token_type(1) == TokenType.TRIGGER:
-                return self._parse_drop_trigger()
-            # DROP TABLE/INDEX
+                result = self._parse_drop_trigger()
+            # 其他DROP分支，统一处理TABLE/INDEX等
             else:
-                # print("[PARSER DEBUG] dispatching to _parse_drop_statement")
-                return self._parse_drop_statement()
+                result = self._parse_drop_statement()
         elif self.current_token.type == TokenType.GRANT:
-            return self._parse_grant()
+            # 权限授予语句
+            result = self._parse_grant()
         elif self.current_token.type == TokenType.REVOKE:
-            return self._parse_revoke()
+            # 权限回收语句
+            result = self._parse_revoke()
         elif self.current_token.type == TokenType.INSERT:
-            # print("[PARSER DEBUG] dispatching to _parse_insert")
-            return self._parse_insert()
+            # 插入语句
+            result = self._parse_insert()
         elif self.current_token.type == TokenType.SELECT:
-            # print("[PARSER DEBUG] dispatching to _parse_select")
-            return self._parse_select()
+            # 查询语句
+            result = self._parse_select()
         elif self.current_token.type == TokenType.UPDATE:  
-            # print("[PARSER DEBUG] dispatching to _parse_update")
-            return self._parse_update()
+            # 更新语句
+            result = self._parse_update()
         elif self.current_token.type == TokenType.DELETE:  
-            # print("[PARSER DEBUG] dispatching to _parse_delete")
-            return self._parse_delete()
+            # 删除语句
+            result = self._parse_delete()
         elif self.current_token.type == TokenType.BEGIN:
-            return self._parse_begin()
+            # BEGIN事务语句
+            result = self._parse_begin()
         elif self.current_token.type == TokenType.START:
-            return self._parse_start_transaction()
+            # START TRANSACTION事务语句，区别于BEGIN
+            result = self._parse_start_transaction()
         elif self.current_token.type == TokenType.COMMIT:
-            return self._parse_commit()
+            # 提交事务
+            result = self._parse_commit()
         elif self.current_token.type == TokenType.ROLLBACK:
-            return self._parse_rollback()
+            # 回滚事务
+            result = self._parse_rollback()
         elif self.current_token.type == TokenType.SET:
-            return self._parse_set()
+            # SET相关配置
+            result = self._parse_set()
         elif self.current_token.type == TokenType.TRUNCATE:
-            return self._parse_truncate()
+            # TRUNCATE TABLE语句
+            result = self._parse_truncate()
         elif self.current_token.type == TokenType.ALTER:
-            return self._parse_alter_table()
+            # ALTER TABLE语句
+            result = self._parse_alter_table()
         elif self.current_token.type == TokenType.SHOW:
-            return self._parse_show()
+            # SHOW相关配置
+            result = self._parse_show()
         else:
+            # 兜底分支：遇到未知或不支持的语句类型，直接报错
             raise SyntaxError(f"不支持的语句类型: {self.current_token.value}")
+        # 统一要求所有SQL语句必须以英文分号结尾
+        self._expect(TokenType.SEMICOLON)
+        return result
 
     def _advance(self):
         """移动到下一个token"""
@@ -100,7 +112,9 @@ class SQLParser:
             self.current_token = self.tokens[self.position]
 
     def _expect(self, expected_type: TokenType) -> Token:
-        """期望特定类型的token"""
+        """期望特定类型的token
+        若当前token类型不符则抛出带行列号的语法错误。
+        """
         if not self.current_token or self.current_token.type != expected_type:
             line = self.current_token.line if self.current_token else -1
             column = self.current_token.column if self.current_token else -1
@@ -111,6 +125,7 @@ class SQLParser:
         return token
 
     def _peek_token_type(self, offset):
+        # 向前窥视offset个token，返回其类型
         pos = self.position + offset
         if 0 <= pos < len(self.tokens):
             return self.tokens[pos].type
@@ -118,7 +133,9 @@ class SQLParser:
 
 
     def _parse_column_definition(self) -> dict:
-        """解析列定义，支持DEFAULT、CHECK、FOREIGN KEY"""
+        """解析列定义，支持DEFAULT、CHECK、FOREIGN KEY
+        返回列名、类型、长度、约束、默认值、检查、外键等信息。
+        """
         column_name = self._expect(TokenType.IDENTIFIER).value
 
         # 解析数据类型
@@ -235,7 +252,9 @@ class SQLParser:
         }
 
     def _parse_insert(self) -> InsertStatement:
-        """解析 INSERT 语句"""
+        """解析 INSERT 语句
+        支持多行插入、可选列名。
+        """
         self._expect(TokenType.INSERT)
         self._expect(TokenType.INTO)
 
@@ -289,14 +308,20 @@ class SQLParser:
         return TruncateTableStatement(table_name)
 
     def _parse_select(self) -> SelectStatement:
-        """解析 SELECT 语句"""
+        """解析 SELECT 语句
+        支持聚合、JOIN、WHERE、GROUP BY、ORDER BY等子句。
+        """
         self._expect(TokenType.SELECT)
 
-        # 解析选择列表
+        # 解析选择列表（SELECT后面跟的字段/表达式/聚合函数等）
         columns = []
         while True:
-            # 支持聚合函数
-            if self.current_token.type in (
+            # 修复：优先判断SELECT *，防止*被_parse_expression误判
+            if self.current_token.type == TokenType.STAR:
+                columns.append("*")
+                self._advance()
+            # 如果是聚合函数（如COUNT/SUM等），则特殊处理
+            elif self.current_token.type in (
                 TokenType.COUNT,
                 TokenType.SUM,
                 TokenType.AVG,
@@ -306,19 +331,20 @@ class SQLParser:
                 func_type = self.current_token.type
                 self._advance()
                 self._expect(TokenType.LEFT_PAREN)
+                # 支持COUNT(*)
                 if self.current_token.type == TokenType.STAR:
                     arg = "*"
                     self._advance()
                 else:
+                    # 解析聚合函数参数，可以是表达式
                     arg = self._parse_expression()
                 self._expect(TokenType.RIGHT_PAREN)
+                # 构造聚合函数AST节点
                 columns.append(AggregateFunction(func_type.name, arg))
-            elif self.current_token.type == TokenType.STAR:
-                columns.append("*")
-                self._advance()
             else:
+                # 普通列名或带表前缀的列
                 column_name = self._expect(TokenType.IDENTIFIER).value
-                # 检查是否有表前缀
+                # 检查是否有表前缀（如table.col）
                 if self.current_token and self.current_token.type == TokenType.DOT:
                     self._advance()
                     table_name = column_name
@@ -327,24 +353,28 @@ class SQLParser:
                 else:
                     columns.append(ColumnRef(column_name))
 
+            # 逗号分隔多个字段，遇到逗号则继续循环，否则跳出
             if self.current_token.type == TokenType.COMMA:
                 self._advance()
             else:
                 break
 
+        # 解析FROM子句，获取主表名和可选别名
         self._expect(TokenType.FROM)
-        from_table = self._expect(TokenType.IDENTIFIER).value
-
-        # 解析JOIN链
-        join_clause = None
-        left = from_table
+        from_table_name = self._expect(TokenType.IDENTIFIER).value
+        from_table_alias = None
+        if self.current_token and self.current_token.type == TokenType.IDENTIFIER:
+            from_table_alias = self._expect(TokenType.IDENTIFIER).value
+        # 修复：只传表名字符串，不传元组，别名单独处理
+        left = from_table_name
+        # 支持多表JOIN，循环处理所有JOIN子句
         while self.current_token and self.current_token.type in (
             TokenType.JOIN,
             TokenType.INNER,
             TokenType.LEFT,
             TokenType.RIGHT,
         ):
-            # 解析JOIN类型
+            # 判断JOIN类型
             if self.current_token.type == TokenType.INNER:
                 join_type = "INNER"
                 self._advance()
@@ -358,22 +388,29 @@ class SQLParser:
                 self._advance()
                 self._expect(TokenType.JOIN)
             else:
-                join_type = "INNER"  # 默认INNER JOIN
+                # 默认JOIN类型为INNER
+                join_type = "INNER"
                 self._expect(TokenType.JOIN)
 
-            right_table = self._expect(TokenType.IDENTIFIER).value
+            # 解析右表名和可选别名
+            right_table_name = self._expect(TokenType.IDENTIFIER).value
+            right_table_alias = None
+            if self.current_token and self.current_token.type == TokenType.IDENTIFIER:
+                right_table_alias = self._expect(TokenType.IDENTIFIER).value
+            # 解析ON条件表达式
             self._expect(TokenType.ON)
             on_expr = self._parse_where_expression()
-            left = JoinClause(left, right_table, join_type, on_expr)
+            # 构造JOIN AST节点，left链式连接
+            left = JoinClause(left, right_table_name, join_type, on_expr)
         # left为最终的from_table（str或JoinClause）
 
-        # WHERE 子句
+        # 解析可选的WHERE子句
         where_clause = None
         if self.current_token and self.current_token.type == TokenType.WHERE:
             self._advance()
             where_clause = self._parse_where_expression()
 
-        # GROUP BY 子句（可选）
+        # 解析可选的GROUP BY子句，支持多列
         group_by = []
         if self.current_token and self.current_token.type == TokenType.GROUP and self._peek_token_type(1) == TokenType.BY:
             self._advance()  # GROUP
@@ -389,13 +426,14 @@ class SQLParser:
                     else:
                         group_by.append(ColumnRef(name))
                 else:
+                    # GROUP BY分支：遇到非标识符，抛出语法错误
                     raise SyntaxError(str([self.current_token.line, self.current_token.column, "GROUP BY 期望列名"]))
                 if self.current_token and self.current_token.type == TokenType.COMMA:
                     self._advance()
                 else:
                     break
 
-        # ORDER BY 子句（可选）
+        # 解析可选的ORDER BY子句，支持多列和排序方向
         order_by = []
         if self.current_token and self.current_token.type == TokenType.ORDER and self._peek_token_type(1) == TokenType.BY:
             self._advance()  # ORDER
@@ -412,8 +450,9 @@ class SQLParser:
                     else:
                         expr = ColumnRef(name)
                 else:
+                    # ORDER BY分支：遇到非标识符，抛出语法错误
                     raise SyntaxError(str([self.current_token.line, self.current_token.column, "ORDER BY 期望列名"]))
-                # 方向（可选）
+                # 解析排序方向，默认为ASC
                 direction = "ASC"
                 if self.current_token and self.current_token.type in (TokenType.ASC, TokenType.DESC):
                     direction = self.current_token.value.upper()
@@ -424,20 +463,15 @@ class SQLParser:
                 else:
                     break
 
-        # DEBUG: 打印SELECT解析结果摘要
-        try:
-            cols_repr = ", ".join(str(c) for c in columns)
-        except Exception:
-            cols_repr = str(columns)
-        # print(f"[PARSER DEBUG] SELECT parsed: columns=[{cols_repr}], from={left}, where={where_clause}")
+        # 构造SELECT AST节点，包含所有子句
         return SelectStatement(columns, left, where_clause, group_by, order_by)
 
     def _parse_where_expression(self) -> Expression:
-        """解析 WHERE 表达式"""
+        """解析 WHERE 表达式（入口）"""
         return self._parse_or_expression()
 
     def _parse_or_expression(self) -> Expression:
-        """解析 OR 表达式"""
+        """解析 OR 表达式，左递归"""
         left = self._parse_and_expression()
 
         while self.current_token and self.current_token.type == TokenType.OR:
@@ -449,7 +483,7 @@ class SQLParser:
         return left
 
     def _parse_and_expression(self) -> Expression:
-        """解析 AND 表达式"""
+        """解析 AND 表达式，左递归"""
         left = self._parse_comparison_expression()
 
         while self.current_token and self.current_token.type == TokenType.AND:
@@ -461,7 +495,7 @@ class SQLParser:
         return left
 
     def _parse_comparison_expression(self) -> Expression:
-        """解析比较表达式"""
+        """解析比较表达式，支持=、!=、<、<=、>、>="""
         left = self._parse_expression()
 
         if self.current_token and self.current_token.type in (
@@ -480,16 +514,19 @@ class SQLParser:
         return left
 
     def _parse_expression(self) -> Expression:
-        """解析基本表达式"""
-        # --- 在这里加入唯一的调试代码 ---
-        # print(f"DEBUG: [Parser._parse_expression] received token: {self.current_token}")
-        # --- 调试代码结束 ---
+        """解析基本表达式，支持列、字面量、NULL、布尔、简单二元算术运算（+ - * /）"""
+        left = self._parse_primary()
+        while self.current_token and self.current_token.type in (TokenType.STAR, TokenType.PLUS, TokenType.MINUS, TokenType.SLASH):
+            op_token = self.current_token
+            self._advance()
+            right = self._parse_primary()
+            left = BinaryOp(left, op_token.value, right)
+        return left
 
+    def _parse_primary(self) -> Expression:
         if self.current_token.type == TokenType.IDENTIFIER:
             column_name = self.current_token.value
             self._advance()
-
-            # 检查表前缀
             if self.current_token and self.current_token.type == TokenType.DOT:
                 self._advance()
                 table_name = column_name
@@ -497,59 +534,34 @@ class SQLParser:
                 return ColumnRef(column_name, table_name)
             else:
                 return ColumnRef(column_name)
-
         elif self.current_token.type == TokenType.NUMBER:
             value = self.current_token.value
             self._advance()
-
             if "." in value:
                 return Literal(float(value), "FLOAT")
             else:
                 return Literal(int(value), "INTEGER")
-
         elif self.current_token.type == TokenType.STRING:
             value = self.current_token.value.strip("'")
             self._advance()
             return Literal(value, "STRING")
-
         elif self.current_token.type == TokenType.NULL:
             self._advance()
             return Literal(None, "NULL")
-
-        # 添加布尔值处理
         elif self.current_token.type == TokenType.TRUE:
             self._advance()
             return Literal(True, "BOOLEAN")
-
         elif self.current_token.type == TokenType.FALSE:
             self._advance()
             return Literal(False, "BOOLEAN")
-
         else:
             raise SyntaxError(str([self.current_token.line, self.current_token.column, f"不期望的token: {self.current_token.value}"]))
 
-    # def _parse_create_statement(self) -> Statement:
-    #     """解析CREATE语句（TABLE或INDEX）"""
-    #     self._expect(TokenType.CREATE)
-
-    #     # 检查是否是UNIQUE INDEX
-    #     is_unique = False
-    #     if self.current_token and self.current_token.type == TokenType.UNIQUE:
-    #         is_unique = True
-    #         self._advance()
-
-    #     if self.current_token.type == TokenType.TABLE:
-    #         # 回退一步，让原有的解析方法处理
-    #         self.position -= 1
-    #         self.current_token = self.tokens[self.position]
-    #         return self._parse_create_table()
-    #     elif self.current_token.type == TokenType.INDEX:
-    #         return self._parse_create_index(is_unique)
-    #     else:
-    #         raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
 
     def _parse_if_exists_flags(self, support_not=True):
-        """辅助解析 IF [NOT] EXISTS，返回 (if_exists, if_not_exists)"""
+        """辅助解析 IF [NOT] EXISTS，返回 (if_exists, if_not_exists)
+        用于CREATE/DROP等语句的可选修饰。
+        """
         if_exists = False
         if_not_exists = False
         if self.current_token and self.current_token.type == TokenType.IF:
@@ -572,6 +584,7 @@ class SQLParser:
     #     return decorator
 
     def _parse_create_table(self):
+        # 解析 CREATE TABLE 语句，支持 IF NOT EXISTS
         self._expect(TokenType.TABLE)
         # 在 CREATE TABLE 之后，在表名之前，解析 IF NOT EXISTS
         _, if_not_exists = self._parse_if_exists_flags(support_not=True)
@@ -589,6 +602,7 @@ class SQLParser:
         return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists)
 
     def _parse_drop_table(self):
+        # 解析 DROP TABLE 语句，支持 IF EXISTS
         self._expect(TokenType.TABLE)
         # 在 DROP TABLE 之后，在表名之前，解析 IF EXISTS
         if_exists, _ = self._parse_if_exists_flags(support_not=False)
@@ -596,7 +610,9 @@ class SQLParser:
         return DropTableStatement(table_name, if_exists=if_exists)
 
     def _parse_update(self) -> UpdateStatement:
-        """解析UPDATE语句: UPDATE table SET col1=val1, col2=val2 WHERE condition"""
+        """解析UPDATE语句: UPDATE table SET col1=val1, col2=val2 WHERE condition
+        支持多列赋值和可选WHERE。
+        """
         self._expect(TokenType.UPDATE)
 
         # 获取表名
@@ -629,7 +645,9 @@ class SQLParser:
         return UpdateStatement(table_name, set_clauses, where_clause)
 
     def _parse_delete(self) -> DeleteStatement:
-        """解析DELETE语句: DELETE FROM table WHERE condition"""
+        """解析DELETE语句: DELETE FROM table WHERE condition
+        支持可选WHERE。
+        """
         self._expect(TokenType.DELETE)
         self._expect(TokenType.FROM)
 
@@ -646,6 +664,7 @@ class SQLParser:
 
 
     def _parse_create_index(self, is_unique: bool = False):
+        # 解析 CREATE [UNIQUE] INDEX 语句，支持 IF NOT EXISTS
         self._expect(TokenType.INDEX)
         # 在 CREATE INDEX 之后，在表名之前，解析 IF NOT EXISTS
         _, if_not_exists = self._parse_if_exists_flags(support_not=True)
@@ -659,6 +678,7 @@ class SQLParser:
         return CreateIndexStatement(index_name, table_name, column_name, is_unique, if_not_exists=if_not_exists)
 
     def _parse_drop_index(self):
+        # 解析 DROP INDEX 语句，支持 IF EXISTS
         self._expect(TokenType.INDEX)
         # 在 DROP INDEX 之后，在表名之前，解析 IF EXISTS
         if_exists, _ = self._parse_if_exists_flags(support_not=False)
@@ -667,6 +687,7 @@ class SQLParser:
 
 
     def _parse_create_view(self):
+        # 解析 CREATE VIEW 语句，支持 IF NOT EXISTS
         self._expect(TokenType.CREATE)
         self._expect(TokenType.VIEW)
 
@@ -675,7 +696,6 @@ class SQLParser:
         view_name = self._expect(TokenType.IDENTIFIER).value
         self._expect(TokenType.AS)
 
-        # --- 修改开始 ---
         # 从当前位置开始，收集tokens直到分号或EOF
         start_pos = self.position
         while self.current_token and self.current_token.type != TokenType.SEMICOLON and self.current_token.type != TokenType.EOF:
@@ -683,11 +703,9 @@ class SQLParser:
 
         end_pos = self.position
         definition_tokens = self.tokens[start_pos:end_pos]
-        # --- 修改结束 ---
 
         parts = []
         for token in definition_tokens:
-            # 这里原来的逻辑保持不变
             if token.type == TokenType.STRING:
                 parts.append("'" + token.value.replace("'", "''") + "'")
             else:
@@ -697,6 +715,7 @@ class SQLParser:
         return CreateViewStatement(view_name, view_definition, if_not_exists=if_not_exists)
 
     def _parse_drop_view(self):
+        # 解析 DROP VIEW 语句，支持 IF EXISTS
         self._expect(TokenType.DROP)
         self._expect(TokenType.VIEW)
         # 在 DROP VIEW 之后，在表名之前，解析 IF EXISTS
@@ -706,6 +725,7 @@ class SQLParser:
 
 
     def _parse_create_user(self):
+        # 解析 CREATE USER 语句，支持 IF NOT EXISTS
         self._expect(TokenType.CREATE)
         self._expect(TokenType.USER)
         # 在 CREATE USER 之后，在表名之前，解析 IF NOT EXISTS
@@ -717,6 +737,7 @@ class SQLParser:
         return CreateUserStatement(username, password, if_not_exists=if_not_exists)
 
     def _parse_drop_user(self):
+        # 解析 DROP USER 语句，支持 IF EXISTS
         self._expect(TokenType.DROP)
         self._expect(TokenType.USER)
         # 在 DROP USER 之后，在表名之前，解析 IF EXISTS
@@ -726,6 +747,7 @@ class SQLParser:
 
     # 在 _parse_create_statement/_parse_drop_statement 里分发到上述方法
     def _parse_create_statement(self):
+        # CREATE分发：TABLE/INDEX
         self._expect(TokenType.CREATE)
         if self.current_token.type == TokenType.UNIQUE:
             self._advance()
@@ -738,6 +760,7 @@ class SQLParser:
             raise SyntaxError(f"期望TABLE或INDEX，但得到{self.current_token.value}")
 
     def _parse_drop_statement(self):
+        # DROP分发：TABLE/INDEX
         self._expect(TokenType.DROP)
         if self.current_token.type == TokenType.INDEX:
             return self._parse_drop_index()
@@ -747,7 +770,9 @@ class SQLParser:
             raise SyntaxError(f"DROP语句支持INDEX或TABLE，但得到 {self.current_token.value}")
 
     def _parse_grant(self) -> GrantStatement:
-        """解析 GRANT 语句"""
+        """解析 GRANT 语句
+        支持ALL/SELECT/INSERT等权限关键字。
+        """
         self._expect(TokenType.GRANT)
 
         # 解析权限类型 - 修复：支持关键字作为权限名
@@ -779,7 +804,9 @@ class SQLParser:
         return GrantStatement(privilege, table_name, username)
 
     def _parse_revoke(self) -> RevokeStatement:
-        """解析 REVOKE 语句"""
+        """解析 REVOKE 语句
+        支持ALL/SELECT/INSERT等权限关键字。
+        """
         self._expect(TokenType.REVOKE)
 
         # 解析权限类型 - 修复：支持关键字作为权限名
@@ -811,25 +838,32 @@ class SQLParser:
         return RevokeStatement(privilege, table_name, username)
 
     def _parse_begin(self) -> Statement:
+        # 解析 BEGIN [TRANSACTION] 事务开始
         self._expect(TokenType.BEGIN)
         if self.current_token and self.current_token.type == TokenType.TRANSACTION:
             self._advance()
         return BeginTransaction()
 
     def _parse_start_transaction(self) -> Statement:
+        # 解析 START TRANSACTION 事务开始
         self._expect(TokenType.START)
         self._expect(TokenType.TRANSACTION)
         return BeginTransaction()
 
     def _parse_commit(self) -> Statement:
+        # 解析 COMMIT 事务提交
         self._expect(TokenType.COMMIT)
         return CommitTransaction()
 
     def _parse_rollback(self) -> Statement:
+        # 解析 ROLLBACK 事务回滚
         self._expect(TokenType.ROLLBACK)
         return RollbackTransaction()
 
     def _parse_set(self) -> Statement:
+        """解析 SET 语句
+        支持 SET AUTOCOMMIT=0|1 和 SET SESSION TRANSACTION ISOLATION LEVEL ...
+        """
         self._expect(TokenType.SET)
         # 两种形式： SET AUTOCOMMIT=0|1 或 SET SESSION TRANSACTION ISOLATION LEVEL ...
         if self.current_token.type == TokenType.AUTOCOMMIT:
@@ -840,6 +874,7 @@ class SQLParser:
                 self._advance()
                 return SetAutocommit(enabled)
             else:
+                # AUTOCOMMIT分支：只允许0或1，其他值报错
                 raise SyntaxError("AUTOCOMMIT 只能为 0 或 1")
         elif self.current_token.type == TokenType.SESSION:
             self._advance()
@@ -856,6 +891,7 @@ class SQLParser:
                     self._advance()
                     return SetIsolationLevel("READ UNCOMMITTED")
                 else:
+                    # READ分支：未知的READ隔离级别
                     raise SyntaxError("未知的隔离级别: READ ...")
             elif self.current_token.type == TokenType.REPEATABLE:
                 self._advance()
@@ -865,12 +901,16 @@ class SQLParser:
                 self._advance()
                 return SetIsolationLevel("SERIALIZABLE")
             else:
+                # SESSION分支：未知的隔离级别
                 raise SyntaxError("未知的隔离级别")
         else:
+            # SET分支：仅支持AUTOCOMMIT和SESSION
             raise SyntaxError("仅支持: SET AUTOCOMMIT 或 SET SESSION TRANSACTION ISOLATION LEVEL ...")
 
     def _parse_create_trigger(self) -> CreateTriggerStatement:
-        """解析 CREATE TRIGGER 语句"""
+        """解析 CREATE TRIGGER 语句
+        支持 BEFORE/AFTER, INSERT/UPDATE/DELETE, FOR EACH ROW, 触发器体。
+        """
         self._expect(TokenType.CREATE)
         self._expect(TokenType.TRIGGER)
 
@@ -922,7 +962,7 @@ class SQLParser:
         return CreateTriggerStatement(trigger_name, timing, event, table_name, statement)
 
     def _parse_drop_trigger(self) -> DropTriggerStatement:
-        """解析 DROP TRIGGER 语句"""
+        # 解析 DROP TRIGGER 语句，支持 IF EXISTS
         self._expect(TokenType.DROP)
         self._expect(TokenType.TRIGGER)
 
@@ -939,6 +979,7 @@ class SQLParser:
         return DropTriggerStatement(trigger_name, if_exists)
 
     def _parse_alter_table(self):
+        # 解析 ALTER TABLE 语句，支持 ADD COLUMN/DROP COLUMN
         self._expect(TokenType.ALTER)
         self._expect(TokenType.TABLE)
         table_name = self._expect(TokenType.IDENTIFIER).value
@@ -956,7 +997,7 @@ class SQLParser:
             raise SyntaxError(f"ALTER TABLE 仅支持 ADD COLUMN 或 DROP COLUMN, 得到 {self.current_token.value}")
 
     def _parse_show(self) -> ShowStatement:
-        """解析SHOW语句"""
+        # 解析 SHOW AUTOCOMMIT/SHOW ISOLATION LEVEL
         self._expect(TokenType.SHOW)
 
         if self.current_token.type == TokenType.AUTOCOMMIT:
