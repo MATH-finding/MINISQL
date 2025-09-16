@@ -915,7 +915,7 @@ class DatabaseWebAPI:
                                     <span id="current-user-txn">-</span>
                                 </div>
                             </div>
-                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">刷新状态</button>
+                            <button class="btn btn-secondary" onclick="refreshTransactionStatus()">手动刷新</button>
                         </div>
 
                         <!-- 事务控制 -->
@@ -1018,13 +1018,22 @@ class DatabaseWebAPI:
         
                 // 显示消息
                 function showMessage(element, message, isError = false) {
-                    const alertClass = isError ? 'alert-error' : 'alert-success';
-                    element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
-                    setTimeout(() => {
-                        if (element.querySelector('.alert')) {
-                            element.querySelector('.alert').remove();
-                        }
-                    }, 5000);
+                    if (!element) {
+                        console.warn('showMessage: 目标元素为null');
+                        return;
+                    }
+                    
+                    try {
+                        const alertClass = isError ? 'alert-error' : 'alert-success';
+                        element.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+                        setTimeout(() => {
+                            if (element && element.querySelector('.alert')) {
+                                element.querySelector('.alert').remove();
+                            }
+                        }, 5000);
+                    } catch (e) {
+                        console.warn('showMessage 执行失败:', e);
+                    }
                 }
 
                 // 登录
@@ -1083,6 +1092,8 @@ class DatabaseWebAPI:
 
                 // 切换标签页
                 function showTab(tabId) {
+                    console.log('切换到标签页:', tabId);
+                    
                     // 隐藏所有标签页内容
                     const contents = document.querySelectorAll('.tab-content');
                     contents.forEach(content => content.classList.remove('active'));
@@ -1092,21 +1103,38 @@ class DatabaseWebAPI:
                     tabs.forEach(tab => tab.classList.remove('active'));
 
                     // 显示选中的标签页
-                    document.getElementById(tabId).classList.add('active');
+                    const targetContent = document.getElementById(tabId);
+                    if (targetContent) {
+                        targetContent.classList.add('active');
+                        console.log('显示内容区域:', tabId);
+                    } else {
+                        console.error('未找到内容区域:', tabId);
+                    }
 
                     // 激活对应的标签
+                    const tabText = getTabText(tabId);
+                    console.log('查找标签文本:', tabText);
                     const activeTab = Array.from(tabs).find(tab => 
-                        tab.textContent.includes(getTabText(tabId))
+                        tab.textContent.includes(tabText)
                     );
-                    if (activeTab) activeTab.classList.add('active');
+                    if (activeTab) {
+                        activeTab.classList.add('active');
+                        console.log('激活标签:', activeTab.textContent);
+                    } else {
+                        console.error('未找到对应的标签:', tabText);
+                    }
 
                     // 关闭侧边栏
-                    document.getElementById('sidebar').classList.remove('open');
+                    const sidebar = document.getElementById('sidebar');
+                    if (sidebar) {
+                        sidebar.classList.remove('open');
+                    }
                 }
 
                 function getTabText(tabId) {
                     const map = {
                         'sql-tab': 'SQL 查询',
+                        'transaction-tab': '事务管理',
                         'tables-tab': '表管理',
                         'views-tab': '视图管理',
                         'indexes-tab': '索引管理',
@@ -1251,6 +1279,23 @@ class DatabaseWebAPI:
                         }
                         
                         resultEl.innerHTML = finalHtml;
+                        
+                        // 检查是否执行了事务相关的SQL，如果是则刷新事务状态
+                        const transactionKeywords = ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK', 'SET AUTOCOMMIT', 'SET SESSION TRANSACTION'];
+                        const upperSql = sql.toUpperCase();
+                        const hasTransactionCommand = transactionKeywords.some(keyword => upperSql.includes(keyword));
+                        
+                        if (hasTransactionCommand) {
+                            console.log('检测到事务相关命令，刷新事务状态');
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 500);
+                        } else {
+                            // 对于其他SQL命令，也刷新事务状态以确保一致性
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 200);
+                        }
                         
                     } catch (error) {
                         showMessage(resultEl, '请求失败: ' + error.message, true);
@@ -1676,6 +1721,25 @@ class DatabaseWebAPI:
 
                 // ==================== 事务管理功能 ====================
 
+                // 初始化事务按钮状态
+                function initializeTransactionButtons() {
+                    console.log('初始化事务按钮状态 - 所有按钮启用');
+                    const beginBtn = document.getElementById('begin-btn');
+                    const commitBtn = document.getElementById('commit-btn');
+                    const rollbackBtn = document.getElementById('rollback-btn');
+                    
+                    if (beginBtn && commitBtn && rollbackBtn) {
+                        // 所有按钮都启用，在执行时再检查状态
+                        beginBtn.disabled = false;
+                        commitBtn.disabled = false;
+                        rollbackBtn.disabled = false;
+                        console.log('所有按钮已启用');
+                    } else {
+                        console.error('无法找到事务按钮元素');
+                    }
+                }
+
+
                 // 刷新事务状态
                 async function refreshTransactionStatus() {
                     try {
@@ -1685,35 +1749,23 @@ class DatabaseWebAPI:
                             credentials: 'include'
                         });
 
+                        if (!response.ok) {
+                            console.error('获取事务状态失败:', response.status, response.statusText);
+                            return;
+                        }
+
                         const result = await response.json();
                         console.log('事务状态响应:', result);
 
                         if (result.success) {
                             const data = result.data;
+                            console.log('事务状态数据:', data);
+                            
                             document.getElementById('session-id').textContent = data.session_id || '-';
                             document.getElementById('autocommit-status').textContent = data.autocommit ? '是' : '否';
                             document.getElementById('transaction-state').textContent = data.in_transaction ? '进行中' : '未开始';
                             document.getElementById('isolation-level').textContent = data.isolation_level || '-';
                             document.getElementById('current-user-txn').textContent = data.current_user || '-';
-
-                            // 更新按钮状态
-                            const beginBtn = document.getElementById('begin-btn');
-                            const commitBtn = document.getElementById('commit-btn');
-                            const rollbackBtn = document.getElementById('rollback-btn');
-
-                            console.log('更新按钮状态，事务状态:', data.in_transaction);
-                            
-                            if (data.in_transaction) {
-                                beginBtn.disabled = true;
-                                commitBtn.disabled = false;
-                                rollbackBtn.disabled = false;
-                                console.log('禁用开始事务按钮');
-                            } else {
-                                beginBtn.disabled = false;
-                                commitBtn.disabled = true;
-                                rollbackBtn.disabled = true;
-                                console.log('启用开始事务按钮');
-                            }
 
                             // 更新自动提交复选框
                             document.getElementById('autocommit-checkbox').checked = data.autocommit;
@@ -1731,17 +1783,35 @@ class DatabaseWebAPI:
 
                 // 开始事务
                 async function beginTransaction() {
+                    console.log('开始事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前已有活动事务，请先提交或回滚', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/begin', {
                             method: 'POST',
                             credentials: 'include'
                         });
 
                         const result = await response.json();
+                        console.log('开始事务响应:', result);
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已开始', false);
-                            refreshTransactionStatus();
+                            // 刷新事务状态
+                            setTimeout(() => {
+                                console.log('强制刷新事务状态');
+                                refreshTransactionStatus();
+                            }, 200);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '开始事务失败: ' + result.message, true);
                         }
@@ -1752,7 +1822,20 @@ class DatabaseWebAPI:
 
                 // 提交事务
                 async function commitTransaction() {
+                    console.log('提交事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && !statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前没有活动事务，无法提交', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/commit', {
                             method: 'POST',
                             credentials: 'include'
@@ -1762,7 +1845,10 @@ class DatabaseWebAPI:
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已提交', false);
-                            refreshTransactionStatus();
+                            // 刷新状态
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 100);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '提交事务失败: ' + result.message, true);
                         }
@@ -1773,7 +1859,20 @@ class DatabaseWebAPI:
 
                 // 回滚事务
                 async function rollbackTransaction() {
+                    console.log('回滚事务按钮被点击');
                     try {
+                        // 先检查当前事务状态
+                        const statusResponse = await fetch('/api/transaction/status', {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+                        const statusResult = await statusResponse.json();
+                        
+                        if (statusResult.success && !statusResult.data.in_transaction) {
+                            showMessage(document.getElementById('transaction-status-info'), '错误：当前没有活动事务，无法回滚', true);
+                            return;
+                        }
+
                         const response = await fetch('/api/transaction/rollback', {
                             method: 'POST',
                             credentials: 'include'
@@ -1783,7 +1882,10 @@ class DatabaseWebAPI:
 
                         if (result.success) {
                             showMessage(document.getElementById('transaction-status-info'), '事务已回滚', false);
-                            refreshTransactionStatus();
+                            // 刷新状态
+                            setTimeout(() => {
+                                refreshTransactionStatus();
+                            }, 100);
                         } else {
                             showMessage(document.getElementById('transaction-status-info'), '回滚事务失败: ' + result.message, true);
                         }
@@ -2182,6 +2284,9 @@ class DatabaseWebAPI:
                         }
                     }, 1000);
                     
+                    // 初始化按钮状态
+                    initializeTransactionButtons();
+                    
                     // 添加调试信息
                     console.log('页面加载完成，准备刷新事务状态');
                 });
@@ -2490,32 +2595,34 @@ class DatabaseWebAPI:
                 # 检查是否是Shell命令（以反斜杠开头）
                 if sql.strip().startswith('\\') or sql.strip().startswith('\\\\'):
                     result = self._handle_shell_command(sql.strip(), db)
+                    all_results.append(result)
                 else:
-                # 将SQL按分号分割成多个语句
+                    # 将SQL按分号分割成多个语句
                     stmts = [s.strip() for s in sql.split(';') if s.strip()]
                     if not stmts:
-                            result = {"type": "EMPTY", "message": "请输入SQL语句."}
+                        result = {"type": "EMPTY", "message": "请输入SQL语句."}
+                        all_results.append(result)
                     else:
                         # 循环执行每个语句，通常客户端只显示最后一条语句的结果
-                            for stmt in stmts:
+                        for stmt in stmts:
                             # 执行器可能需要以分号结尾
-                                full_stmt = stmt + ';'
-                                result = db.execute_sql(full_stmt)
+                            full_stmt = stmt + ';'
+                            result = db.execute_sql(full_stmt)
 
-                    if not isinstance(result, dict):
-                        result = {'success': False, 'message': '执行结果格式错误'}
+                            if not isinstance(result, dict):
+                                result = {'success': False, 'message': '执行结果格式错误'}
 
-                    if 'success' not in result:
-                        result['success'] = True
+                            if 'success' not in result:
+                                result['success'] = True
 
-                    # 格式化SELECT查询结果
-                    if (result.get('success') and
-                        result.get('type') == 'SELECT' and
-                        'data' in result and
-                        isinstance(result['data'], list)):
-                        result['formatted'] = self._format_select_for_web(result['data'])
-                    
-                    all_results.append(result)
+                            # 格式化SELECT查询结果
+                            if (result.get('success') and
+                                result.get('type') == 'SELECT' and
+                                'data' in result and
+                                isinstance(result['data'], list)):
+                                result['formatted'] = self._format_select_for_web(result['data'])
+                            
+                            all_results.append(result)
 
                 # 如果只有一条语句，为保持兼容性，直接返回结果
                 if len(all_results) == 1:
@@ -2998,10 +3105,15 @@ class DatabaseWebAPI:
 
             try:
                 session_id = self._get_session_id()
+                logger.info(f"获取事务状态，会话ID: {session_id}")
+                
                 db = self._get_db(session_id)
+                logger.info(f"数据库连接成功")
                 
                 # 获取当前会话信息
                 sessions = db.list_sessions()
+                logger.info(f"所有会话: {sessions}")
+                
                 current_session = None
                 for s in sessions:
                     if s['current']:
@@ -3009,21 +3121,23 @@ class DatabaseWebAPI:
                         break
                 
                 if current_session:
+                    logger.info(f"当前会话信息: {current_session}")
                     return jsonify({
                         'success': True,
                         'data': {
                             'session_id': current_session['session_id'],
                             'autocommit': current_session['autocommit'],
-                            'in_transaction': current_session['in_txn'],
+                            'in_transaction': current_session['in_txn'],  # 保持字段名一致
                             'isolation_level': current_session['isolation'],
                             'current_user': session.get('username', 'unknown')
                         }
                     })
                 else:
+                    logger.error("未找到当前会话")
                     return jsonify({'success': False, 'message': '无法获取会话状态'}), 500
 
             except Exception as e:
-                logger.error(f"获取事务状态失败: {e}")
+                logger.error(f"获取事务状态失败: {e}", exc_info=True)
                 return jsonify({'success': False, 'message': f'获取事务状态失败: {str(e)}'}), 500
 
         @self.app.route('/api/transaction/isolation', methods=['POST'])
