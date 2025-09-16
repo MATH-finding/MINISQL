@@ -16,7 +16,11 @@ from interface.database import SimpleDatabase
 
 
 def run():
-    db_file = "diagnostics_test.db"
+    db = SimpleDatabase('diagnostics_test.db')
+    db.login('admin', 'admin123')
+    db_file = db.db_file
+    
+
     if os.path.exists(db_file):
         try:
             os.remove(db_file)
@@ -24,6 +28,7 @@ def run():
             pass
 
     db = SimpleDatabase(db_file, cache_size=16)
+    db.login('admin', 'admin123')
     try:
         print("\n=== 准备数据 ===")
         format_query_result(db.execute_sql("CREATE TABLE Emp (Id INTEGER PRIMARY KEY, Name TEXT, Dept TEXT, Salary INTEGER)"))

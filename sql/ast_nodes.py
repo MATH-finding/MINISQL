@@ -28,10 +28,12 @@ class Statement(ASTNode):
 class ColumnRef(Expression):
     """列引用"""
 
-    def __init__(self, column_name: str, table_name: str = None):
+    def __init__(self, column_name: str, table_name: str = None, line: int = None, column: int = None):
         self.column_name = column_name
         self.table_name = table_name
-        # print(f"[AST DEBUG] ColumnRef created: column_name={column_name}, table_name={table_name}")
+        self.line = line
+        self.column = column
+        # print(f"[AST DEBUG] ColumnRef created: column_name={column_name}, table_name={table_name}, line={line}, column={column}")
 
     def __repr__(self):
         if self.table_name:

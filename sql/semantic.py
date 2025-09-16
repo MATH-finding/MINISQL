@@ -23,7 +23,13 @@ from .ast_nodes import (
 
 
 class SemanticError(Exception):
-    pass
+    def __init__(self, reason, line=None, column=None):
+        error_type = "SemanticError"
+        position = f"行{line},列{column}" if line is not None and column is not None else "未知位置"
+        self.error_list = [error_type, position, reason]
+        super().__init__(self.error_list)
+    def __str__(self):
+        return str(self.error_list)
 
 
 class AnalyzedResult:

@@ -68,10 +68,10 @@ class SQLParser:
         elif self.current_token.type == TokenType.SELECT:
             # print("[PARSER DEBUG] dispatching to _parse_select")
             return self._parse_select()
-        elif self.current_token.type == TokenType.UPDATE:  # 新增
+        elif self.current_token.type == TokenType.UPDATE:  
             # print("[PARSER DEBUG] dispatching to _parse_update")
             return self._parse_update()
-        elif self.current_token.type == TokenType.DELETE:  # 新增
+        elif self.current_token.type == TokenType.DELETE:  
             # print("[PARSER DEBUG] dispatching to _parse_delete")
             return self._parse_delete()
         elif self.current_token.type == TokenType.BEGIN:
@@ -102,9 +102,10 @@ class SQLParser:
     def _expect(self, expected_type: TokenType) -> Token:
         """期望特定类型的token"""
         if not self.current_token or self.current_token.type != expected_type:
-            raise SyntaxError(
-                f"期望 {expected_type.value}, 但得到 {self.current_token.value if self.current_token else 'EOF'}"
-            )
+            line = self.current_token.line if self.current_token else -1
+            column = self.current_token.column if self.current_token else -1
+            actual = self.current_token.value if self.current_token else 'EOF'
+            raise SyntaxError(str([line, column, f"期望{expected_type.value}, 实际{actual}"]))
         token = self.current_token
         self._advance()
         return token
@@ -115,33 +116,6 @@ class SQLParser:
             return self.tokens[pos].type
         return None
 
-    # def _parse_create_table(self) -> CreateTableStatement:
-    #     """解析 CREATE TABLE 语句，支持 IF NOT EXISTS"""
-    #     self._expect(TokenType.CREATE)
-    #     if_not_exists = False
-    #     if self.current_token.type == TokenType.IF:
-    #         self._advance()
-    #         if self.current_token.type == TokenType.NOT:
-    #             self._advance()
-    #             self._expect(TokenType.EXISTS)
-    #             if_not_exists = True
-    #     self._expect(TokenType.TABLE)
-
-    #     table_name = self._expect(TokenType.IDENTIFIER).value
-    #     self._expect(TokenType.LEFT_PAREN)
-
-    #     columns = []
-    #     while self.current_token.type != TokenType.RIGHT_PAREN:
-    #         column = self._parse_column_definition()
-    #         columns.append(column)
-
-    #         if self.current_token.type == TokenType.COMMA:
-    #             self._advance()
-    #         elif self.current_token.type != TokenType.RIGHT_PAREN:
-    #             raise SyntaxError("列定义之间需要逗号分隔")
-
-    #     self._expect(TokenType.RIGHT_PAREN)
-    #     return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists)
 
     def _parse_column_definition(self) -> dict:
         """解析列定义，支持DEFAULT、CHECK、FOREIGN KEY"""
@@ -165,7 +139,7 @@ class SQLParser:
             data_type = self.current_token.value.upper()
             self._advance()
         else:
-            raise SyntaxError(f"期望数据类型，但得到 {self.current_token.value}")
+           raise SyntaxError(str([self.current_token.line, self.current_token.column, f"期望数据类型，但得到 {self.current_token.value}"]))
 
         # 解析长度（对于VARCHAR）
         length = None
@@ -233,7 +207,7 @@ class SQLParser:
                     default = None
                     self._advance()
                 else:
-                    raise SyntaxError(f"不支持的DEFAULT值: {self.current_token.value}")
+                    raise SyntaxError(str([self.current_token.line, self.current_token.column, f"不支持的DEFAULT值: {self.current_token.value}"]))
             elif self.current_token.type == TokenType.CHECK:
                 self._advance()
                 self._expect(TokenType.LEFT_PAREN)
@@ -276,7 +250,7 @@ class SQLParser:
                 if self.current_token.type == TokenType.COMMA:
                     self._advance()
                 elif self.current_token.type != TokenType.RIGHT_PAREN:
-                    raise SyntaxError("列名之间需要逗号分隔")
+                    raise SyntaxError(str([self.current_token.line, self.current_token.column, "列名之间需要逗号分隔"]))
             self._expect(TokenType.RIGHT_PAREN)
 
         self._expect(TokenType.VALUES)
@@ -294,7 +268,7 @@ class SQLParser:
                 if self.current_token.type == TokenType.COMMA:
                     self._advance()
                 elif self.current_token.type != TokenType.RIGHT_PAREN:
-                    raise SyntaxError("值之间需要逗号分隔")
+                    raise SyntaxError(str([self.current_token.line, self.current_token.column, "值之间需要逗号分隔"]))
 
             self._expect(TokenType.RIGHT_PAREN)
             values.append(row_values)
@@ -415,7 +389,7 @@ class SQLParser:
                     else:
                         group_by.append(ColumnRef(name))
                 else:
-                    raise SyntaxError("GROUP BY 期望列名")
+                    raise SyntaxError(str([self.current_token.line, self.current_token.column, "GROUP BY 期望列名"]))
                 if self.current_token and self.current_token.type == TokenType.COMMA:
                     self._advance()
                 else:
@@ -438,7 +412,7 @@ class SQLParser:
                     else:
                         expr = ColumnRef(name)
                 else:
-                    raise SyntaxError("ORDER BY 期望列名")
+                    raise SyntaxError(str([self.current_token.line, self.current_token.column, "ORDER BY 期望列名"]))
                 # 方向（可选）
                 direction = "ASC"
                 if self.current_token and self.current_token.type in (TokenType.ASC, TokenType.DESC):
@@ -552,7 +526,7 @@ class SQLParser:
             return Literal(False, "BOOLEAN")
 
         else:
-            raise SyntaxError(f"不期望的token: {self.current_token.value}")
+            raise SyntaxError(str([self.current_token.line, self.current_token.column, f"不期望的token: {self.current_token.value}"]))
 
     # def _parse_create_statement(self) -> Statement:
     #     """解析CREATE语句（TABLE或INDEX）"""
@@ -610,7 +584,7 @@ class SQLParser:
             if self.current_token.type == TokenType.COMMA:
                 self._advance()
             elif self.current_token.type != TokenType.RIGHT_PAREN:
-                raise SyntaxError("列定义之间需要逗号分隔")
+                raise SyntaxError(str([self.current_token.line, self.current_token.column, "列定义之间需要逗号分隔"]))
         self._expect(TokenType.RIGHT_PAREN)
         return CreateTableStatement(table_name, columns, if_not_exists=if_not_exists)
 
