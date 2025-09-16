@@ -128,8 +128,7 @@ CREATE TABLE users (
     id INTEGER PRIMARY KEY,
     name VARCHAR(50) NOT NULL,
     email VARCHAR(100) UNIQUE,
-    age INTEGER CHECK(age >= 0),
-    created_at DATETIME DEFAULT NOW()
+    age INTEGER CHECK(age >= 0)
 );
 
 -- 创建索引
@@ -154,14 +153,7 @@ INSERT INTO users (name, email, age)
 VALUES ('张三', 'zhangsan@email.com', 25);
 
 -- 查询数据
-SELECT u.name, u.email, COUNT(*) as order_count
-FROM users u 
-LEFT JOIN orders o ON u.id = o.user_id
-WHERE u.age > 20
-GROUP BY u.id, u.name, u.email
-HAVING COUNT(*) > 5
-ORDER BY order_count DESC
-LIMIT 10;
+SELECT * FROM users WHERE age > 20;
 
 -- 更新数据
 UPDATE users SET age = 26 WHERE name = '张三';
