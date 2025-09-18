@@ -18,11 +18,16 @@ from typing import Set
 
 class SystemCatalog:
     def __init__(self, buffer_manager: BufferManager):
+        """
+        初始化系统目录
+        Args:
+            buffer_manager: 缓冲区管理器实例
+        """
         self.buffer_manager = buffer_manager
-        self.tables: Dict[str, TableSchema] = {}
-        self.table_pages: Dict[str, List[int]] = {}
+        self.tables: Dict[str, TableSchema] = {}  # 存储表名到表结构的映射
+        self.table_pages: Dict[str, List[int]] = {}  # 存储表名到页面ID列表的映射
         self.catalog_page_id = 1  # 修改：使用页面1而不是页面0，避开头部页面
-        self.views = {}
+        self.views = {}  # 存储视图定义
 
         # 触发器管理
         self.triggers: Dict[str, Dict] = {}  # trigger_name -> trigger_definition
@@ -33,8 +38,8 @@ class SystemCatalog:
             {}
         )  # username -> {table_name -> {privileges}}
 
-        self._load_catalog()
-        self._init_default_admin()
+        self._load_catalog()  # 从磁盘加载系统目录
+        self._init_default_admin()  # 初始化默认管理员账户
 
     def _init_default_admin(self):
         """初始化默认管理员账户"""

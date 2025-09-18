@@ -12,9 +12,12 @@ class Page:
     PAGE_SIZE = 4096
 
     def __init__(self, page_id: int, data: bytes = None):
+        # 全局唯一标识符，用于在磁盘文件中定位页面
         self.page_id = page_id
         self.data = bytearray(data) if data else bytearray(self.PAGE_SIZE)
+        # 标记页面是否被修改，决定是否需要写回磁盘
         self.is_dirty = False
+        # 引用计数，防止正在使用的页面被缓存淘汰
         self.pin_count = 0
 
     def read_bytes(self, offset: int, length: int) -> bytes:
@@ -46,16 +49,24 @@ class PageManager:
     """页面管理器，负责页面的分配、读写"""
 
     def __init__(self, db_file: str):
-        self.db_file = db_file
-        self.next_page_id = 0
-        self._ensure_file_exists()
-        self._load_header()
+
+        """
+        初始化页面管理器
+        :param db_file: 数据库文件路径
+        """
+        self.db_file = db_file  # 数据库文件路径
+        self.next_page_id = 0  # 下一个可用的页面ID
+        self._ensure_file_exists()  # 确保数据库文件存在
+        self._load_header()  # 加载文件头部信息
 
     def _ensure_file_exists(self):
+        """
+        确保数据库文件存在，如果不存在或小于4字节，则创建文件并写入4字节的0作为头部
+        """
         # 如果文件不存在或文件小于4字节，写入4字节的0作为头部
         if not os.path.exists(self.db_file) or os.path.getsize(self.db_file) < 4:
             with open(self.db_file, "wb") as f:
-                f.write(b"\x00\x00\x00\x00")
+                f.write(b"\x00\x00\x00\x00")  # 写入4字节的0作为文件头部
 
     def _load_header(self):
         """加载文件头部信息"""

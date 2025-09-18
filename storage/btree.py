@@ -41,15 +41,15 @@ class BPlusTree:
 
     def __init__(
         self,
-        buffer_manager: BufferManager,
-        page_manager: PageManager,
-        order: int = 50,
-        root_page_id: Optional[int] = None,
-        is_unique: bool = False,  # 添加这个参数
+        buffer_manager: BufferManager,  # 缓冲区管理器，用于管理数据页的缓存
+        page_manager: PageManager,  # 页面管理器，负责数据页的读写操作
+        order: int = 50,  # B+树的阶数，决定每个节点能容纳的关键字数量
+        root_page_id: Optional[int] = None,  # 根节点所在的页面ID，如果为None则创建新树
+        is_unique: bool = False,  # 添加这个参数，用于标识索引是否唯一
     ):
-        self.buffer_manager = buffer_manager
-        self.page_manager = page_manager
-        self.order = order
+        self.buffer_manager = buffer_manager  # 初始化缓冲区管理器
+        self.page_manager = page_manager  # 初始化页面管理器
+        self.order = order  # 设置B+树的阶数
         self.root_page_id = root_page_id
         self.root = None
         self.is_unique = is_unique  # 添加这个属性

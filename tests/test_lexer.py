@@ -180,18 +180,37 @@ def test_illegal_character_error():
         column = getattr(e, 'column', '?')
         assert_test("测试非法字符错误提示", True, f"Expected position: {line}, {column}")
 
+
 def test_unclosed_string_error():
+    """测试字符串没有闭合时的错误处理"""
     sql = "SELECT 'hello world;"
     lexer = SQLLexer(sql)
+    tokens_before_error = []
     try:
-        tokens = lexer.tokenize()
-        for token in tokens:
+        for token in lexer.tokenize():
+            tokens_before_error.append(token)
+
+        # 如果代码能完整运行到这里，说明没有抛出预期的异常，测试失败
+        print("--- Tokens (Test Failed) ---")
+        for token in tokens_before_error:
             print(str(token))
-        assert_test("测试未闭合的字符串错误", False, "Expected SyntaxError not raised")
+        assert_test("测试未闭合的字符串错误", False, "预期中的SyntaxError未被抛出")
+
     except SyntaxError as e:
+        # 成功捕获到异常，这是预期的行为，测试通过
+        print("--- 在遇到错误前成功解析的 Tokens ---")
+        for token in tokens_before_error:
+            print(str(token))
+
         line = getattr(e, 'line', '?')
         column = getattr(e, 'column', '?')
-        assert_test("测试未闭合的字符串错误", True, f"Expected position: {line}, {column}")
+
+        # 打印出具体的错误提示
+        print(f"--- 捕获到的错误 ---")
+        print(f"错误类型: SyntaxError, 位置: 行 {line}, 列 {column}, 原因: {e}")
+
+        assert_test("测试未闭合的字符串错误", True)
+
 
 def test_all_transaction_keywords():
     sql = "BEGIN TRANSACTION; COMMIT; ROLLBACK; SET AUTOCOMMIT=0; SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;"
@@ -206,7 +225,7 @@ def test_all_transaction_keywords():
             TokenType.COMMIT, TokenType.SEMICOLON,
             TokenType.ROLLBACK, TokenType.SEMICOLON,
             TokenType.SET, TokenType.AUTOCOMMIT, TokenType.EQUALS, TokenType.NUMBER, TokenType.SEMICOLON,
-            TokenType.SET, TokenType.SESSION, TokenType.TRANSACTION, TokenType.ISOLATION, TokenType.LEVEL, 
+            TokenType.SET, TokenType.SESSION, TokenType.TRANSACTION, TokenType.ISOLATION, TokenType.LEVEL,
             TokenType.REPEATABLE, TokenType.READ, TokenType.SEMICOLON,
             TokenType.EOF
         ]

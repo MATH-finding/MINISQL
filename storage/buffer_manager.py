@@ -13,6 +13,7 @@ class BufferManager:
         self.page_manager = page_manager
         self.cache_size = cache_size
         self.cache: Dict[int, Page] = {}
+        # 空列表，左边是"最久未访问"，右边是"最近访问"
         self.access_order = []  # LRU访问顺序
 
         # 统计信息

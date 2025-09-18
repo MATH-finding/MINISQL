@@ -31,28 +31,35 @@ class SimpleDatabase:
     """简化版数据库系统主接口"""
 
     def __init__(self, db_file: str, cache_size: int = 100):
-        self.db_file = db_file
+
+        """
+        初始化数据库系统
+        :param db_file: 数据库文件路径
+        :param cache_size: 缓存大小，默认为100页
+        """
+        self.db_file = db_file  # 数据库文件路径
 
         # 添加日志管理器初始化
-        from db_logging.log_manager import LogManager
+        from db_logging.log_manager import LogManager  # 导入日志管理器
 
+        # 从数据库文件路径中提取数据库名称
         db_name = os.path.splitext(os.path.basename(db_file))[0]
-        self.log_manager = LogManager(db_name)
+        self.log_manager = LogManager(db_name)  # 初始化日志管理器
 
         # 初始化存储层
-        self.page_manager = PageManager(db_file)
-        self.buffer_manager = BufferManager(self.page_manager, cache_size)
+        self.page_manager = PageManager(db_file)  # 页面管理器，负责物理存储
+        self.buffer_manager = BufferManager(self.page_manager, cache_size)  # 缓冲区管理器，管理内存缓存
 
         # 为buffer_manager设置日志管理器
-        self.buffer_manager.set_log_manager(self.log_manager)
+        self.buffer_manager.set_log_manager(self.log_manager)  # 关联日志功能
 
-        self.record_manager = RecordManager(self.buffer_manager)
+        self.record_manager = RecordManager(self.buffer_manager)  # 记录管理器，处理数据记录
 
         # 初始化目录层
-        self.catalog = SystemCatalog(self.buffer_manager)
+        self.catalog = SystemCatalog(self.buffer_manager)  # 系统目录，存储元数据
 
         # 添加索引管理器
-        self.index_manager = IndexManager(
+        self.index_manager = IndexManager(  # 索引管理器，处理数据索引
             self.buffer_manager, self.page_manager, self.catalog
         )
 

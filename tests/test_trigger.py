@@ -4,7 +4,7 @@ from interface.formatter import format_query_result
 
 def run_trigger_tests():
     print("=== 触发器功能测试 ===")
-    db = SimpleDatabase('test_trigger.db')
+    db = SimpleDatabase('../test_trigger.db')
     db.login('admin', 'admin123')
 
     # 清理环境

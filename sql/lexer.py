@@ -7,6 +7,7 @@ from enum import Enum
 from typing import List, NamedTuple
 
 
+from enum import Enum
 class TokenType(Enum):
     # 关键字
     SELECT = "SELECT"

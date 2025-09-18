@@ -24,6 +24,14 @@ from .ast_nodes import (
 
 class SemanticError(Exception):
     def __init__(self, reason, line=None, column=None):
+
+        """
+        初始化语义错误异常类
+        参数:
+            reason: 错误原因描述
+            line: 错误所在的行号(可选)
+            column: 错误所在的列号(可选)
+        """
         error_type = "SemanticError"
         position = f"行{line},列{column}" if line is not None and column is not None else "未知位置"
         self.error_list = [error_type, position, reason]
