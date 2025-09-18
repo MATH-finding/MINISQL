@@ -78,7 +78,6 @@ miniSQL/
 ├── main.py                    # 主程序入口
 ├── requirements.txt           # 依赖列表
 ├── README.md                 # 项目说明
-├── test_index_parsing.py      # 索引解析测试文件
 ├── storage/                   # 存储层
 │   ├── __init__.py
 │   ├── page_manager.py       # 页面管理
@@ -113,9 +112,10 @@ miniSQL/
 │   ├── planner_interface.py # 执行计划接口
 │   └── web_api.py           # Flask Web API
 └── db_logging/               # 日志系统
-    ├── __init__.py
-    ├── logger.py            # 核心日志器
-    └── log_manager.py       # 日志管理器
+│   ├── __init__.py
+│   ├── logger.py            # 核心日志器
+│   └── log_manager.py       # 日志管理器
+├── test/                    # 测试目录
 ```
 
 ## 支持的SQL语法
